@@ -2,6 +2,8 @@
 
 Automated cryptocurrency trading bot using the **VuManChu Cipher B** (VMC) indicator strategy. Supports live trading on Hyperliquid and comprehensive backtesting with multiple exit strategies.
 
+> **New to the bot?** See [SETUP.md](SETUP.md) for complete step-by-step instructions.
+
 ## Features
 
 - **VMC Signal Detection**: Anchor wave → Trigger wave → MFI confirmation → VWAP cross
