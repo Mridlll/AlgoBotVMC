@@ -1,0 +1,145 @@
+# ============================================================================
+# VMC Trading Bot Configuration
+# ============================================================================
+# Copy this file to config.yaml and fill in your settings
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Exchange Configuration
+# ----------------------------------------------------------------------------
+exchange:
+  name: "hyperliquid"            # Options: hyperliquid, bitunix
+  api_key: ""                    # Leave empty for Hyperliquid
+  api_secret: ""                 # Your wallet private key (Hyperliquid)
+  wallet_address: ""             # Your wallet address (0x...)
+  testnet: true                  # true = testnet, false = mainnet (REAL MONEY)
+
+# ----------------------------------------------------------------------------
+# Trading Parameters
+# ----------------------------------------------------------------------------
+trading:
+  assets:                        # Assets to trade
+    - "BTC"
+    - "ETH"
+    - "SOL"
+  timeframe: "30m"               # Candle timeframe (recommended: 30m)
+                                 # Options: 1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d
+  risk_percent: 3.0              # Percentage of account to risk per trade
+  max_positions: 3               # Maximum total open positions
+  max_positions_per_asset: 1     # Maximum positions per asset
+  leverage: 1.0                  # Leverage multiplier (1.0 = no leverage)
+
+# ----------------------------------------------------------------------------
+# VMC Indicator Settings
+# ----------------------------------------------------------------------------
+# These should match your TradingView VMC Cipher B settings
+indicators:
+  # WaveTrend parameters
+  wt_channel_len: 9              # Channel length
+  wt_average_len: 12             # Average length
+  wt_ma_len: 3                   # MA length
+
+  # Overbought/Oversold levels (anchor wave thresholds)
+  wt_overbought_1: 53            # First overbought level
+  wt_overbought_2: 60            # Anchor wave level for SHORTS
+  wt_oversold_1: -53             # First oversold level
+  wt_oversold_2: -60             # Anchor wave level for LONGS
+
+  # Money Flow settings
+  mfi_period: 60
+  mfi_multiplier: 150.0
+  mfi_y_pos: 2.5
+
+# ----------------------------------------------------------------------------
+# Stop Loss Configuration
+# ----------------------------------------------------------------------------
+stop_loss:
+  method: "swing"                # Options: swing, atr, fixed_percent
+
+  # Swing method settings
+  swing_lookback: 5              # Candles to look back for swing high/low
+  buffer_percent: 0.5            # Buffer below/above swing level (%)
+
+  # ATR method settings
+  atr_multiplier: 1.5            # ATR multiplier for stop distance
+  atr_period: 14                 # ATR calculation period
+
+  # Fixed percent method settings
+  fixed_percent: 2.0             # Fixed stop loss percentage
+
+# ----------------------------------------------------------------------------
+# Take Profit Configuration
+# ----------------------------------------------------------------------------
+take_profit:
+  method: "oscillator"           # Options: fixed_rr, oscillator, partial, trailing
+  risk_reward: 2.0               # Target R:R ratio (for fixed_rr method)
+
+  # Oscillator exit mode (when method = "oscillator")
+  # Options:
+  #   - full_signal:    Wait for complete opposite VMC signal (all 4 conditions)
+  #   - wt_cross:       Exit when WT1 crosses WT2 in opposite direction
+  #   - first_reversal: Exit on first reversal sign (MFI, VWAP, or WT cross)
+  oscillator_mode: "wt_cross"    # Recommended: wt_cross (most consistent)
+
+  # Partial TP settings (when method = "partial")
+  partial_tp_percent: 50.0       # Close this % at first target
+  partial_tp_rr: 1.0             # First target R:R
+  move_sl_to_breakeven: true     # Move SL to entry after partial TP
+
+  # Trailing stop settings (when method = "trailing")
+  trailing_activation_rr: 1.5    # Activate trailing after this R:R
+  trailing_distance_percent: 1.0 # Trail distance from price (%)
+
+# ----------------------------------------------------------------------------
+# Backtesting Configuration
+# ----------------------------------------------------------------------------
+backtest:
+  start_date: "2024-01-01"       # Backtest start date
+  end_date: "2024-12-01"         # Backtest end date
+  initial_balance: 10000.0       # Starting capital ($)
+  commission_percent: 0.06       # Trading fees (%)
+
+# ----------------------------------------------------------------------------
+# Discord Notifications
+# ----------------------------------------------------------------------------
+discord:
+  enabled: false                 # Enable/disable Discord notifications
+  webhook_url: ""                # Your Discord webhook URL
+  notify_on_signal: true         # Notify when signal detected
+  notify_on_trade_open: true     # Notify when trade opens
+  notify_on_trade_close: true    # Notify when trade closes
+  notify_on_error: true          # Notify on errors
+
+# ----------------------------------------------------------------------------
+# Webhook Configuration (for TradingView alerts)
+# ----------------------------------------------------------------------------
+webhook:
+  enabled: false                 # Enable webhook server
+  host: "0.0.0.0"                # Listen address
+  port: 8080                     # Listen port
+  secret: ""                     # Webhook validation secret
+  path: "/webhook"               # Webhook endpoint path
+
+# ============================================================================
+# RECOMMENDED CONFIGURATIONS
+# ============================================================================
+#
+# Conservative (Low Risk):
+#   trading.timeframe: "30m"
+#   trading.risk_percent: 1.0
+#   take_profit.method: "oscillator"
+#   take_profit.oscillator_mode: "first_reversal"
+#
+# Balanced (Medium Risk):
+#   trading.timeframe: "30m"
+#   trading.risk_percent: 2.0
+#   take_profit.method: "oscillator"
+#   take_profit.oscillator_mode: "wt_cross"
+#
+# Aggressive (High Risk):
+#   trading.timeframe: "30m"
+#   trading.risk_percent: 3.0
+#   take_profit.method: "oscillator"
+#   take_profit.oscillator_mode: "full_signal"
+#
+# ============================================================================
