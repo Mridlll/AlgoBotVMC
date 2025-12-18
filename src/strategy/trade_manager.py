@@ -9,11 +9,16 @@ from enum import Enum
 import pandas as pd
 
 from exchanges.base import (
-    BaseExchange, Order, Position, OrderSide, OrderType, PositionSide
+    BaseExchange, Order, Position, OrderSide, OrderType, PositionSide, OrderStatus
 )
 from strategy.signals import Signal, SignalType
 from strategy.risk import RiskManager, RiskParams, StopLossMethod, TakeProfitMethod
 from utils.logger import get_logger
+
+
+class OrderNotFilledException(Exception):
+    """Raised when an order fails to fill within timeout."""
+    pass
 
 logger = get_logger("trade_manager")
 
@@ -119,6 +124,60 @@ class TradeManager:
         self._trade_counter += 1
         return f"trade_{self._trade_counter}_{int(datetime.utcnow().timestamp())}"
 
+    async def _wait_for_fill(
+        self,
+        order_id: str,
+        symbol: str,
+        timeout_seconds: int = 30,
+        poll_interval: float = 1.0
+    ) -> Optional[Order]:
+        """
+        Wait for an order to be filled.
+
+        Args:
+            order_id: The order ID to wait for
+            symbol: Trading symbol
+            timeout_seconds: Maximum time to wait for fill
+            poll_interval: Time between status checks
+
+        Returns:
+            Filled Order object, or None if timeout
+        """
+        max_attempts = int(timeout_seconds / poll_interval)
+
+        for attempt in range(max_attempts):
+            try:
+                order = await self.exchange.get_order(order_id, symbol)
+
+                if order is None:
+                    logger.warning(f"Order {order_id} not found on attempt {attempt + 1}")
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+                if order.status == OrderStatus.FILLED:
+                    logger.debug(f"Order {order_id} filled at {order.avg_fill_price}")
+                    return order
+
+                if order.status == OrderStatus.PARTIALLY_FILLED:
+                    logger.info(f"Order {order_id} partially filled: {order.filled_size}/{order.size}")
+                    # For market orders, partial fills should complete quickly
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+                if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
+                    logger.warning(f"Order {order_id} was {order.status.value}")
+                    return None
+
+                # Status is PENDING or OPEN, keep waiting
+                await asyncio.sleep(poll_interval)
+
+            except Exception as e:
+                logger.warning(f"Error checking order status: {e}")
+                await asyncio.sleep(poll_interval)
+
+        logger.warning(f"Order {order_id} did not fill within {timeout_seconds}s")
+        return None
+
     async def can_open_trade(self, symbol: str) -> bool:
         """
         Check if we can open a new trade.
@@ -222,17 +281,55 @@ class TradeManager:
                 take_profit=risk_params.take_profit
             )
 
-            # Update trade with order info
             trade.entry_order_id = entry_order.order_id
+
+            # Wait for fill confirmation with timeout
+            filled_order = await self._wait_for_fill(
+                order_id=entry_order.order_id,
+                symbol=symbol,
+                timeout_seconds=30,
+                poll_interval=1.0
+            )
+
+            if filled_order is None:
+                # Order didn't fill - cancel and abort
+                logger.warning(f"Order {entry_order.order_id} did not fill, cancelling...")
+                try:
+                    await self.exchange.cancel_order(entry_order.order_id, symbol)
+                except Exception as cancel_err:
+                    logger.error(f"Failed to cancel unfilled order: {cancel_err}")
+                raise OrderNotFilledException(f"Order {entry_order.order_id} did not fill within timeout")
+
+            # Use actual fill price from exchange
+            actual_fill_price = filled_order.avg_fill_price or signal.entry_price
+            trade.entry_price = actual_fill_price
+
+            # Recalculate TP if using actual fill price (differs from signal price)
+            if actual_fill_price != signal.entry_price and self.tp_method == TakeProfitMethod.FIXED_RR:
+                sl_distance = abs(actual_fill_price - trade.stop_loss)
+                rr_ratio = risk_params.risk_reward if hasattr(risk_params, 'risk_reward') else 2.0
+                if is_long:
+                    trade.take_profit = actual_fill_price + (sl_distance * rr_ratio)
+                else:
+                    trade.take_profit = actual_fill_price - (sl_distance * rr_ratio)
+
+            # Update trade with order info
             trade.status = TradeStatus.OPEN
             trade.opened_at = datetime.utcnow()
+
+            # Store SL/TP order IDs if the exchange returns them
+            if hasattr(filled_order, 'stop_loss_order_id'):
+                trade.sl_order_id = filled_order.stop_loss_order_id
+            if hasattr(filled_order, 'take_profit_order_id'):
+                trade.tp_order_id = filled_order.take_profit_order_id
 
             # Store active trade
             self._active_trades[trade.trade_id] = trade
 
             logger.info(
-                f"Opened {signal.signal_type.value} trade: {symbol} @ {signal.entry_price}, "
-                f"Size: {risk_params.position_size}, SL: {risk_params.stop_loss}, TP: {risk_params.take_profit}"
+                f"Opened {signal.signal_type.value} trade: {symbol} @ {actual_fill_price} "
+                f"(requested: {signal.entry_price}), "
+                f"Size: {risk_params.position_size}, SL: {trade.stop_loss}, TP: {trade.take_profit}"
             )
 
             return trade

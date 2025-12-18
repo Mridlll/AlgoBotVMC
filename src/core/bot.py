@@ -14,8 +14,9 @@ from exchanges.hyperliquid import HyperliquidExchange
 from exchanges.bitunix import BitunixExchange
 from strategy.signals import SignalDetector, Signal
 from strategy.risk import RiskManager, StopLossMethod, TakeProfitMethod
-from strategy.trade_manager import TradeManager, Trade
+from strategy.trade_manager import TradeManager, Trade, TradeStatus
 from strategy.multi_timeframe import MultiTimeframeCoordinator, MultiTimeframeSignal
+from persistence.trade_store import TradeStore
 from utils.logger import get_logger, setup_logger
 
 logger = get_logger("vmc_bot")
@@ -48,6 +49,8 @@ class VMCBot:
         self.signal_detectors: Dict[str, SignalDetector] = {}
         self.risk_manager: Optional[RiskManager] = None
         self.trade_manager: Optional[TradeManager] = None
+        self.trade_store: Optional[TradeStore] = None
+        self._session_id: int = -1
 
         # Multi-timeframe coordinators (per asset)
         self.mtf_coordinators: Dict[str, MultiTimeframeCoordinator] = {}
@@ -141,6 +144,16 @@ class VMCBot:
                 max_positions_per_asset=self.config.trading.max_positions_per_asset
             )
 
+            # Initialize trade persistence
+            self.trade_store = TradeStore(db_path="data/trades.db")
+
+            # Start new session and get initial balance
+            balance = await self.exchange.get_balance()
+            self._session_id = self.trade_store.start_session(balance.total_balance)
+
+            # Load and recover any active trades from previous sessions
+            await self._recover_trades_from_store()
+
             # Initialize signal detectors for each asset
             for asset in self.config.trading.assets:
                 if self.use_multi_timeframe:
@@ -189,11 +202,97 @@ class VMCBot:
         self._running = False
         self.state.bot_state = BotState.STOPPED
 
+        # End trading session
+        if self.trade_store and self._session_id > 0:
+            try:
+                balance = await self.exchange.get_balance() if self.exchange else None
+                final_balance = balance.total_balance if balance else 0
+                stats = self.trade_manager.get_stats() if self.trade_manager else {}
+
+                self.trade_store.end_session(
+                    session_id=self._session_id,
+                    final_balance=final_balance,
+                    trades_opened=stats.get("total_trades", 0),
+                    trades_closed=stats.get("total_trades", 0),
+                    total_pnl=stats.get("total_pnl", 0)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to end session: {e}")
+
+            self.trade_store.close()
+
         if self.exchange:
             await self.exchange.disconnect()
 
         logger.info("VMC Trading Bot stopped")
         await self._notify("bot_stopped", {})
+
+    async def _recover_trades_from_store(self) -> None:
+        """
+        Recover active trades from database on startup.
+
+        This allows the bot to resume managing trades that were open
+        when it was last stopped (e.g., crash recovery).
+        """
+        if not self.trade_store or not self.trade_manager:
+            return
+
+        try:
+            active_trades = self.trade_store.load_active_trades()
+
+            if not active_trades:
+                logger.info("No active trades to recover from database")
+                return
+
+            logger.info(f"Recovering {len(active_trades)} trades from database...")
+
+            for trade_dict in active_trades:
+                try:
+                    # Verify position still exists on exchange
+                    symbol = trade_dict.get('symbol', '')
+                    position = await self.exchange.get_position(symbol)
+
+                    if not position or abs(position.size) == 0:
+                        # Position was closed externally, mark as closed
+                        logger.info(f"Trade {trade_dict['trade_id']} position no longer exists, marking closed")
+                        self.trade_store.mark_trade_closed(
+                            trade_id=trade_dict['trade_id'],
+                            exit_price=trade_dict.get('entry_price', 0),  # Unknown exit
+                            pnl=0,
+                            pnl_percent=0,
+                            reason="EXTERNAL_CLOSE"
+                        )
+                        continue
+
+                    # Reconstruct Trade object
+                    from strategy.signals import SignalType
+                    trade = Trade(
+                        trade_id=trade_dict['trade_id'],
+                        symbol=trade_dict['symbol'],
+                        signal_type=SignalType(trade_dict['signal_type']),
+                        entry_price=trade_dict['entry_price'],
+                        size=trade_dict.get('size', position.size),
+                        stop_loss=trade_dict.get('stop_loss', 0),
+                        take_profit=trade_dict.get('take_profit', 0),
+                        status=TradeStatus(trade_dict['status']),
+                        entry_order_id=trade_dict.get('entry_order_id'),
+                        sl_order_id=trade_dict.get('sl_order_id'),
+                        tp_order_id=trade_dict.get('tp_order_id'),
+                        opened_at=datetime.fromisoformat(trade_dict['opened_at']) if trade_dict.get('opened_at') else None,
+                        metadata=trade_dict.get('metadata', {})
+                    )
+
+                    # Add to active trades
+                    self.trade_manager._active_trades[trade.trade_id] = trade
+                    logger.info(f"Recovered trade {trade.trade_id}: {trade.symbol} {trade.signal_type.value}")
+
+                except Exception as e:
+                    logger.error(f"Failed to recover trade {trade_dict.get('trade_id')}: {e}")
+
+            logger.info(f"Trade recovery complete. Active trades: {len(self.trade_manager._active_trades)}")
+
+        except Exception as e:
+            logger.error(f"Error during trade recovery: {e}")
 
     async def run_once(self) -> List[Signal]:
         """
@@ -226,8 +325,32 @@ class VMCBot:
         """
         logger.info(f"Starting trading loop (interval: {interval_seconds}s)")
 
+        # Reconcile positions on startup
+        await self._reconcile_positions()
+
+        # Track last reconciliation time
+        last_reconcile = datetime.utcnow()
+        reconcile_interval = 300  # 5 minutes
+
+        # Track last exit check
+        last_exit_check = datetime.utcnow()
+        exit_check_interval = 30  # 30 seconds
+
         while self._running:
             try:
+                now = datetime.utcnow()
+
+                # Check exit conditions more frequently than signals
+                if (now - last_exit_check).total_seconds() >= exit_check_interval:
+                    await self._monitor_active_trades()
+                    last_exit_check = now
+
+                # Periodic position reconciliation
+                if (now - last_reconcile).total_seconds() >= reconcile_interval:
+                    await self._reconcile_positions()
+                    last_reconcile = now
+
+                # Check for new signals
                 signals = await self.run_once()
 
                 for signal in signals:
@@ -237,7 +360,243 @@ class VMCBot:
                 logger.error(f"Error in trading loop: {e}")
                 await self._notify("error", {"message": str(e)})
 
-            await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(min(interval_seconds, exit_check_interval))
+
+    async def _monitor_active_trades(self) -> None:
+        """
+        Monitor active trades for exit conditions.
+
+        Checks if SL/TP orders were filled on the exchange and updates
+        trade status accordingly. Also handles oscillator-based exits.
+        """
+        if not self.trade_manager or not self.trade_manager.active_trades:
+            return
+
+        # active_trades is a Dict[str, Trade], iterate over values
+        for trade in list(self.trade_manager.active_trades.values()):
+            try:
+                symbol = trade.symbol
+
+                # Check if SL order was filled
+                if trade.sl_order_id:
+                    try:
+                        sl_order = await self.exchange.get_order(trade.sl_order_id, symbol)
+                        if sl_order and sl_order.get('status') == 'filled':
+                            logger.info(f"SL hit for trade {trade.trade_id} on {symbol}")
+                            exit_price = sl_order.get('avgPrice', trade.stop_loss)
+                            await self._close_trade(trade, exit_price, "SL_HIT")
+                            continue
+                    except Exception as e:
+                        logger.debug(f"Error checking SL order: {e}")
+
+                # Check if TP order was filled
+                if trade.tp_order_id:
+                    try:
+                        tp_order = await self.exchange.get_order(trade.tp_order_id, symbol)
+                        if tp_order and tp_order.get('status') == 'filled':
+                            logger.info(f"TP hit for trade {trade.trade_id} on {symbol}")
+                            exit_price = tp_order.get('avgPrice', trade.take_profit)
+                            await self._close_trade(trade, exit_price, "TP_HIT")
+                            continue
+                    except Exception as e:
+                        logger.debug(f"Error checking TP order: {e}")
+
+                # Check current price for manual SL/TP enforcement
+                # (backup in case exchange orders didn't trigger)
+                try:
+                    current_price = await self.exchange.get_ticker(symbol)
+                    if current_price:
+                        mid_price = current_price.get('mid', 0)
+                        if mid_price > 0:
+                            # Check SL - use is_long property
+                            if trade.is_long and mid_price <= trade.stop_loss:
+                                logger.warning(f"Manual SL trigger for {trade.trade_id} at {mid_price}")
+                                await self._close_trade(trade, mid_price, "SL_HIT_MANUAL")
+                                continue
+                            elif not trade.is_long and mid_price >= trade.stop_loss:
+                                logger.warning(f"Manual SL trigger for {trade.trade_id} at {mid_price}")
+                                await self._close_trade(trade, mid_price, "SL_HIT_MANUAL")
+                                continue
+
+                            # Check TP
+                            if trade.take_profit:
+                                if trade.is_long and mid_price >= trade.take_profit:
+                                    logger.warning(f"Manual TP trigger for {trade.trade_id} at {mid_price}")
+                                    await self._close_trade(trade, mid_price, "TP_HIT_MANUAL")
+                                    continue
+                                elif not trade.is_long and mid_price <= trade.take_profit:
+                                    logger.warning(f"Manual TP trigger for {trade.trade_id} at {mid_price}")
+                                    await self._close_trade(trade, mid_price, "TP_HIT_MANUAL")
+                                    continue
+                except Exception as e:
+                    logger.debug(f"Error checking current price for {symbol}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error monitoring trade {trade.trade_id}: {e}")
+
+    async def _close_trade(self, trade: Trade, exit_price: float, reason: str) -> None:
+        """
+        Close a trade and update state.
+
+        Args:
+            trade: Trade to close
+            exit_price: Exit price achieved
+            reason: Reason for closing (SL_HIT, TP_HIT, etc.)
+        """
+        from strategy.trade_manager import TradeStatus
+
+        try:
+            # Cancel any remaining SL/TP orders
+            if trade.sl_order_id:
+                try:
+                    await self.exchange.cancel_order(trade.sl_order_id, trade.symbol)
+                except Exception:
+                    pass  # Order may already be filled/cancelled
+
+            if trade.tp_order_id:
+                try:
+                    await self.exchange.cancel_order(trade.tp_order_id, trade.symbol)
+                except Exception:
+                    pass
+
+            # Close position on exchange if still open
+            position = await self.exchange.get_position(trade.symbol)
+            if position and abs(position.get('size', 0)) > 0:
+                await self.exchange.close_position(trade.symbol)
+
+            # Calculate PnL
+            if trade.is_long:
+                pnl = (exit_price - trade.entry_price) * trade.size
+            else:
+                pnl = (trade.entry_price - exit_price) * trade.size
+
+            pnl_percent = (pnl / (trade.entry_price * trade.size)) * 100
+
+            # Update trade record
+            trade.exit_price = exit_price
+            trade.closed_at = datetime.utcnow()
+            trade.pnl = pnl
+            trade.pnl_percent = pnl_percent
+            trade.status = TradeStatus.CLOSED
+            trade.metadata['exit_reason'] = reason
+
+            # Remove from active trades (dict uses trade_id as key)
+            if self.trade_manager and trade.trade_id in self.trade_manager._active_trades:
+                del self.trade_manager._active_trades[trade.trade_id]
+                self.trade_manager._trade_history.append(trade)
+
+            # Persist trade closure to database
+            if self.trade_store:
+                self.trade_store.mark_trade_closed(
+                    trade_id=trade.trade_id,
+                    exit_price=exit_price,
+                    pnl=pnl,
+                    pnl_percent=pnl_percent,
+                    reason=reason
+                )
+
+            logger.info(f"Trade {trade.trade_id} closed: {reason} @ {exit_price}, PnL: ${pnl:.2f}")
+
+            await self._notify("trade_closed", {
+                "trade_id": trade.trade_id,
+                "symbol": trade.symbol,
+                "direction": "long" if trade.is_long else "short",
+                "entry_price": trade.entry_price,
+                "exit_price": exit_price,
+                "pnl": pnl,
+                "pnl_percent": pnl_percent,
+                "reason": reason
+            })
+
+        except Exception as e:
+            logger.error(f"Error closing trade {trade.trade_id}: {e}")
+            await self._notify("error", {"message": f"Failed to close trade: {e}"})
+
+    async def _reconcile_positions(self) -> None:
+        """
+        Reconcile TradeManager state with actual exchange positions.
+
+        This handles:
+        1. Orphaned positions (positions on exchange without matching trade)
+        2. Stale trades (trades in memory but position closed externally)
+        3. Sync position sizes if they differ
+        """
+        from strategy.trade_manager import Trade, TradeStatus
+        from strategy.signals import SignalType
+
+        if not self.exchange or not self.trade_manager:
+            return
+
+        logger.debug("Reconciling positions with exchange...")
+
+        try:
+            # Get all positions from exchange
+            exchange_positions = await self.exchange.get_positions()
+
+            # Build lookup of exchange positions by symbol
+            exchange_pos_by_symbol: Dict[str, Any] = {}
+            for pos in exchange_positions:
+                if pos and abs(pos.get('size', 0)) > 0:
+                    symbol = pos.get('symbol', '')
+                    exchange_pos_by_symbol[symbol] = pos
+
+            # Check for stale trades (trade exists but no position on exchange)
+            # active_trades is Dict[str, Trade]
+            for trade_id, trade in list(self.trade_manager._active_trades.items()):
+                symbol = trade.symbol
+                if symbol not in exchange_pos_by_symbol:
+                    logger.warning(f"Trade {trade.trade_id} has no matching position on exchange - marking as closed")
+                    trade.status = TradeStatus.CLOSED
+                    trade.metadata['exit_reason'] = 'EXTERNAL_CLOSE'
+                    trade.closed_at = datetime.utcnow()
+
+                    # Move to history
+                    del self.trade_manager._active_trades[trade_id]
+                    self.trade_manager._trade_history.append(trade)
+
+                    await self._notify("trade_closed", {
+                        "trade_id": trade.trade_id,
+                        "symbol": symbol,
+                        "reason": "EXTERNAL_CLOSE"
+                    })
+
+            # Check for orphaned positions (position exists but no trade record)
+            tracked_symbols = {t.symbol for t in self.trade_manager._active_trades.values()}
+            for symbol, pos in exchange_pos_by_symbol.items():
+                if symbol not in tracked_symbols:
+                    logger.warning(f"Orphaned position found: {symbol} size={pos.get('size')}")
+
+                    # Create recovery trade to track this position
+                    is_long = pos.get('size', 0) > 0
+                    recovery_trade = Trade(
+                        trade_id=f"recovery_{symbol}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+                        symbol=symbol,
+                        signal_type=SignalType.LONG if is_long else SignalType.SHORT,
+                        entry_price=pos.get('entryPx', pos.get('avgPrice', 0)),
+                        size=abs(pos.get('size', 0)),
+                        stop_loss=0,  # Unknown - will need manual management
+                        take_profit=0,  # Unknown
+                        status=TradeStatus.OPEN,
+                        opened_at=datetime.utcnow(),
+                        metadata={'recovered': True, 'original_position': pos}
+                    )
+
+                    self.trade_manager._active_trades[recovery_trade.trade_id] = recovery_trade
+                    logger.info(f"Created recovery trade for orphaned position: {recovery_trade.trade_id}")
+
+                    await self._notify("position_recovered", {
+                        "trade_id": recovery_trade.trade_id,
+                        "symbol": symbol,
+                        "size": recovery_trade.size,
+                        "direction": "long" if is_long else "short",
+                        "entry_price": recovery_trade.entry_price
+                    })
+
+            logger.debug(f"Reconciliation complete. Active trades: {len(self.trade_manager._active_trades)}")
+
+        except Exception as e:
+            logger.error(f"Error reconciling positions: {e}")
+            await self._notify("error", {"message": f"Position reconciliation failed: {e}"})
 
     async def _check_asset(self, asset: str) -> Optional[Signal]:
         """
@@ -423,6 +782,19 @@ class VMCBot:
 
             if trade:
                 self.state.total_trades += 1
+
+                # Persist trade to database
+                if self.trade_store:
+                    trade_dict = trade.to_dict()
+                    trade_dict['size'] = trade.size
+                    trade_dict['stop_loss'] = trade.stop_loss
+                    trade_dict['take_profit'] = trade.take_profit
+                    trade_dict['entry_order_id'] = trade.entry_order_id
+                    trade_dict['sl_order_id'] = trade.sl_order_id
+                    trade_dict['tp_order_id'] = trade.tp_order_id
+                    trade_dict['metadata'] = trade.metadata
+                    self.trade_store.save_trade(trade_dict)
+
                 await self._notify("trade_opened", trade.to_dict())
 
             return trade

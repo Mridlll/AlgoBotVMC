@@ -52,6 +52,7 @@ env/
 config/config.yaml
 config/*.yaml
 !config/config.example.yaml
+!config/config_production.example.yaml
 
 # ----------------------------------------------------------------------------
 # Data & Cache
