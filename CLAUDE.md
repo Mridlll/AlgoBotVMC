@@ -35,30 +35,61 @@ Automated crypto trading bot based on VuManChu Cipher B indicator strategy. Trad
 2. Ran full 1-year backtest on ALL 108 strategy variants x 4 time filters (432 tests)
 3. Discovered critical finding: results change dramatically with realistic costs
 4. Updated production config to V3.2 with per-asset time filters
+5. Created detailed per-coin strategy breakdown report
 
-**Key Findings (with 0.03% slippage):**
+**Cost Model Applied:**
+- Commission: 0.06% per trade (Hyperliquid maker fee)
+- Slippage: 0.03% per side (0.06% round-trip)
+- Total cost per trade: ~0.18%
 
-| Time Filter | Total PnL | Profitable Configs |
-|-------------|-----------|-------------------|
-| WEEKENDS_ONLY | +$8,007 | 45.2% |
-| NY_HOURS_ONLY | -$5,059 | 35.0% |
-| ALL_HOURS | -$18,324 | 36.1% |
-| OFF_MARKET | -$23,993 | 34.3% |
+**Per-Coin Best Strategies (1-Year Backtest):**
 
-**Critical Discovery:** Different assets need DIFFERENT time filters!
-- BTC: OFF_MARKET is CRITICAL (+$5.6K vs -$21K with ALL_HOURS)
-- ETH: OFF_MARKET helps (+$4.1K vs -$2.9K with ALL_HOURS)
-- SOL: ALL_HOURS is best (+$8.6K, works in all conditions)
+| Asset | TF | Signal | Exit | Filter | PnL | Trades | Win% | PF | Long | Short |
+|-------|-----|--------|------|--------|-----|--------|------|-----|------|-------|
+| **SOL** | 30m | SIMPLE | FULL_SIGNAL | ALL_HOURS | $8,613 | 153 | 41.8% | 1.53 | 84 | 69 |
+| **BTC** | 30m | ENHANCED_60 | FULL_SIGNAL | OFF_MARKET | $5,605 | 47 | 42.6% | 2.08 | 32 | 15 |
+| **ETH** | 30m | SIMPLE | FULL_SIGNAL | OFF_MARKET | $4,136 | 118 | 37.3% | 1.34 | 63 | 55 |
 
-**Files Modified:**
-- `run_v31_walkforward.py` - Added slippage_percent=0.03
-- `config/config_production.example.yaml` - Updated to V3.2 with per-asset time filters
-- `CLAUDE.md` - Updated with V3.2 findings
-- `analyze_time_filters.py` - Created analysis script
+**Time Filter Impact by Asset:**
 
-**Files Generated:**
+| Asset | ALL_HOURS | OFF_MARKET | WEEKENDS | NY_HOURS |
+|-------|-----------|------------|----------|----------|
+| BTC | -$21,104 | +$264 | +$6,228 | -$8,459 |
+| ETH | -$2,894 | -$17,185 | +$1,080 | +$496 |
+| SOL | +$5,675 | -$7,073 | +$699 | +$2,904 |
+
+**Signal Mode Performance:**
+
+| Mode | ALL_HOURS | OFF_MARKET | WEEKENDS | NY_HOURS |
+|------|-----------|------------|----------|----------|
+| SIMPLE | +$1,558 | -$14,269 | +$2,167 | +$16,462 |
+| ENHANCED_60 | -$13,987 | -$1,935 | +$234 | -$12,152 |
+| ENHANCED_70 | -$5,896 | -$7,789 | +$5,606 | -$9,368 |
+
+**Exit Strategy Performance:**
+
+| Exit | ALL_HOURS | OFF_MARKET | WEEKENDS | NY_HOURS |
+|------|-----------|------------|----------|----------|
+| FULL_SIGNAL | +$8,573 | +$14,328 | +$10,300 | +$120 |
+| WT_CROSS | -$7,385 | -$10,491 | -$2,194 | -$507 |
+| FIXED_RR | -$7,026 | -$12,643 | +$4,325 | +$91 |
+| FIRST_REVERSAL | -$12,485 | -$15,188 | -$4,424 | -$4,763 |
+
+**Key Findings:**
+1. FULL_SIGNAL is the ONLY consistently profitable exit strategy
+2. SIMPLE mode outperforms ENHANCED modes overall
+3. BTC: MUST use OFF_MARKET (+$5.6K vs -$21K with ALL_HOURS)
+4. ETH: Best with OFF_MARKET for single best config
+5. SOL: Best performer, works in ALL conditions
+
+**Combined Portfolio:** +$18,354/year (+183%) with ~318 trades
+
+**Files Created:**
 - `output/walkforward_results/v31_walkforward_365d_20251218_0458.csv`
 - `output/walkforward_results/TIME_FILTER_ANALYSIS_1YEAR.md`
+- `output/walkforward_results/DETAILED_STRATEGY_REPORT.md`
+- `analyze_time_filters.py`
+- `analyze_detailed.py`
 
 ---
 
