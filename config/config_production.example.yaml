@@ -1,0 +1,170 @@
+# VMC Trading Bot - Production Configuration (V3.1)
+# Based on 1-year backtest results (2024-2025)
+# Combined expected: +$13,131/year (+131%) with ~351 trades/year
+#
+# Asset Performance Summary:
+# - BTC: 4H ENHANCED + FIXED_RR = +$5,104 (+51%), 11.3% MaxDD, PF 1.75, 34 trades
+# - ETH: 30m ENHANCED + FULL_SIGNAL = +$5,410 (+54%), 47.2% MaxDD, PF 1.10, 285 trades
+# - SOL: 4H ENHANCED + FIXED_RR = +$2,617 (+26%), 20.6% MaxDD, PF 1.43, 32 trades
+
+# ==============================================================================
+# EXCHANGE CONFIGURATION
+# ==============================================================================
+exchange:
+  name: "hyperliquid"
+  api_key: ""
+  api_secret: ""        # Private key (API wallet recommended)
+  wallet_address: ""    # Your API wallet address
+  account_address: ""   # Main wallet address (if using API wallet)
+  testnet: true         # START WITH TESTNET! Switch to false after validation
+
+# ==============================================================================
+# TRADING PARAMETERS
+# ==============================================================================
+trading:
+  assets:
+    - "BTC"
+    - "ETH"
+    - "SOL"
+
+  # Default timeframe (overridden per-asset below)
+  timeframe: "4h"
+
+  # Risk Management - Conservative for production
+  risk_percent: 1.5     # 1.5% per trade (conservative start)
+  max_positions: 6      # 2 per asset
+  max_positions_per_asset: 2
+  leverage: 1.5         # Low leverage for safety
+
+  # Time filter disabled for now - enable after analysis
+  time_filter:
+    enabled: false
+
+# ==============================================================================
+# STRATEGY CONFIGURATION
+# ==============================================================================
+strategy:
+  # Default to ENHANCED mode (per-asset overrides below)
+  signal_mode: "enhanced"
+
+  # ENHANCED mode settings
+  anchor_level: 60
+  trigger_timeout_bars: 20
+  require_mfi_confirm: true
+  require_vwap_confirm: true
+
+# ==============================================================================
+# PER-ASSET CONFIGURATION (V3.1 Optimal Settings)
+# ==============================================================================
+assets_config:
+  # BTC: 4H ENHANCED + FIXED_RR (34 trades/year, 51% return, 11% DD)
+  BTC:
+    enabled: true
+    timeframe: "4h"
+    signal_mode: "enhanced"
+    exit_strategy: "fixed_rr"
+    risk_reward: 2.0
+    anchor_level: 60
+    max_positions: 2
+
+  # ETH: 30m ENHANCED + FULL_SIGNAL (285 trades/year, 54% return, 47% DD)
+  # Note: Higher frequency, uses oscillator exit instead of fixed RR
+  ETH:
+    enabled: true
+    timeframe: "30m"
+    signal_mode: "enhanced"
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    anchor_level: 60
+    max_positions: 2
+
+  # SOL: 4H ENHANCED + FIXED_RR (32 trades/year, 26% return, 21% DD)
+  SOL:
+    enabled: true
+    timeframe: "4h"
+    signal_mode: "enhanced"
+    exit_strategy: "fixed_rr"
+    risk_reward: 2.0
+    anchor_level: 60
+    max_positions: 2
+
+# ==============================================================================
+# VMC INDICATOR SETTINGS
+# ==============================================================================
+indicators:
+  # WaveTrend parameters (standard VMC settings)
+  wt_channel_len: 9
+  wt_average_len: 12
+  wt_ma_len: 3
+
+  # Overbought/Oversold levels
+  wt_overbought_1: 53
+  wt_overbought_2: 60
+  wt_oversold_1: -53
+  wt_oversold_2: -60
+
+  # Money Flow settings
+  mfi_period: 60
+  mfi_multiplier: 150.0
+  mfi_y_pos: 2.5
+
+# ==============================================================================
+# STOP LOSS CONFIGURATION
+# ==============================================================================
+stop_loss:
+  method: "swing"
+  swing_lookback: 5
+  buffer_percent: 0.5
+  atr_multiplier: 1.5
+  atr_period: 14
+  fixed_percent: 2.0
+
+# ==============================================================================
+# TAKE PROFIT CONFIGURATION
+# ==============================================================================
+take_profit:
+  # Default method (overridden per-asset above)
+  method: "fixed_rr"
+  risk_reward: 2.0
+
+  # Oscillator exit settings (for ETH's FULL_SIGNAL mode)
+  oscillator_mode: "full_signal"
+
+  # Partial TP settings (not used in V3.1 config)
+  partial_tp_percent: 50.0
+  partial_tp_rr: 1.0
+  move_sl_to_breakeven: true
+
+  # Trailing stop settings (not used in V3.1 config)
+  trailing_activation_rr: 1.5
+  trailing_distance_percent: 1.0
+
+# ==============================================================================
+# NOTIFICATIONS
+# ==============================================================================
+discord:
+  enabled: true
+  webhook_url: ""       # Set via DISCORD_WEBHOOK env var or paste here
+  notify_on_signal: true
+  notify_on_trade_open: true
+  notify_on_trade_close: true
+  notify_on_error: true
+
+# ==============================================================================
+# WEBHOOK (Optional - for TradingView alerts)
+# ==============================================================================
+webhook:
+  enabled: false
+  host: "0.0.0.0"
+  port: 8080
+  secret: ""
+  path: "/webhook"
+
+# ==============================================================================
+# BACKTESTING (Reference - not used in production)
+# ==============================================================================
+backtest:
+  start_date: "2023-12-17"
+  end_date: "2024-12-17"
+  initial_balance: 10000.0
+  commission_percent: 0.06
