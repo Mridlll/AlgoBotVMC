@@ -1,15 +1,22 @@
-# VMC Trading Bot - Production Configuration (V3.1)
-# Based on 1-year backtest results (2024-2025) + 45-day walk-forward validation
-# Combined expected: +$13,131/year (+131%) with ~351 trades/year
+# VMC Trading Bot - Production Configuration (V3.2)
+# Based on 1-year backtest with REALISTIC COSTS (0.06% commission + 0.03% slippage)
+# Combined expected: +$18,354/year (+183%) with ~318 trades/year
 #
-# Asset Performance Summary (Annual Backtest):
-# - BTC: 4H ENHANCED + FIXED_RR = +$5,104 (+51%), 11.3% MaxDD, PF 1.75, 34 trades
-# - ETH: 30m ENHANCED + FULL_SIGNAL = +$5,410 (+54%), 47.2% MaxDD, PF 1.10, 285 trades
-# - SOL: 4H ENHANCED + FIXED_RR = +$2,617 (+26%), 20.6% MaxDD, PF 1.43, 32 trades
+# COST MODEL:
+# - Commission: 0.06% per trade (Hyperliquid maker fee)
+# - Slippage: 0.03% per side (0.06% round-trip)
+# - Total cost per trade: ~0.18%
 #
-# Walk-Forward Validation (45 days, Dec 2025):
-# - OFF_MARKET filter yields 2.3x better returns than ALL_HOURS
-# - Best: ETH/30m ENHANCED + FULL_SIGNAL + OFF_MARKET = +$3,381 (+33.8%)
+# Asset Performance Summary (1-Year Backtest with Slippage):
+# - BTC: 30m ENHANCED + FULL_SIGNAL + OFF_MARKET = +$5,605 (+56%), PF 2.08, 47 trades
+# - ETH: 30m SIMPLE + FULL_SIGNAL + OFF_MARKET = +$4,136 (+41%), PF 1.34, 118 trades
+# - SOL: 30m SIMPLE + FULL_SIGNAL + ALL_HOURS = +$8,613 (+86%), PF 1.53, 153 trades
+#
+# TIME FILTER ANALYSIS (1-Year):
+# - WEEKENDS_ONLY: +$8,007 overall (only profitable filter across all configs)
+# - ALL_HOURS: -$18,324 (high trade count = high costs)
+# - OFF_MARKET: -$23,993 (but BTC/ETH individually profitable)
+# - Per-asset time filter is CRITICAL for profitability
 
 # ==============================================================================
 # EXCHANGE CONFIGURATION
@@ -32,7 +39,7 @@ trading:
     - "SOL"
 
   # Default timeframe (overridden per-asset below)
-  timeframe: "4h"
+  timeframe: "30m"
 
   # Risk Management - Conservative for production
   risk_percent: 1.5     # 1.5% per trade (conservative start)
@@ -40,11 +47,11 @@ trading:
   max_positions_per_asset: 2
   leverage: 1.5         # Low leverage for safety
 
-  # Time filter - OFF_MARKET mode avoids NY trading hours (9:30am-4pm EST)
-  # Walk-forward validation showed 2.3x better returns with OFF_MARKET filter
+  # Global time filter (overridden per-asset below)
+  # NOTE: Each asset has its own optimal time filter!
   time_filter:
     enabled: true
-    mode: "off_market"        # Options: all_hours, off_market, weekends_only, ny_hours_only
+    mode: "off_market"        # Default, but see per-asset overrides
     ny_open_hour_utc: 14      # 9:30am EST = 14:30 UTC
     ny_close_hour_utc: 21     # 4:00pm EST = 21:00 UTC
 
@@ -52,32 +59,22 @@ trading:
 # STRATEGY CONFIGURATION
 # ==============================================================================
 strategy:
-  # Default to ENHANCED mode (per-asset overrides below)
-  signal_mode: "enhanced"
+  # Default signal mode (overridden per-asset below)
+  signal_mode: "simple"
 
-  # ENHANCED mode settings
+  # ENHANCED mode settings (for BTC)
   anchor_level: 60
   trigger_timeout_bars: 20
   require_mfi_confirm: true
   require_vwap_confirm: true
 
 # ==============================================================================
-# PER-ASSET CONFIGURATION (V3.1 Optimal Settings)
+# PER-ASSET CONFIGURATION (V3.2 Optimal - With Realistic Costs)
 # ==============================================================================
 assets_config:
-  # BTC: 4H ENHANCED + FIXED_RR (34 trades/year, 51% return, 11% DD)
+  # BTC: 30m ENHANCED + FULL_SIGNAL + OFF_MARKET (47 trades/year, 56% return)
+  # NOTE: BTC performs BADLY during NY hours - OFF_MARKET is critical!
   BTC:
-    enabled: true
-    timeframe: "4h"
-    signal_mode: "enhanced"
-    exit_strategy: "fixed_rr"
-    risk_reward: 2.0
-    anchor_level: 60
-    max_positions: 2
-
-  # ETH: 30m ENHANCED + FULL_SIGNAL (285 trades/year, 54% return, 47% DD)
-  # Note: Higher frequency, uses oscillator exit instead of fixed RR
-  ETH:
     enabled: true
     timeframe: "30m"
     signal_mode: "enhanced"
@@ -85,16 +82,33 @@ assets_config:
     oscillator_mode: "full_signal"
     anchor_level: 60
     max_positions: 2
+    time_filter:
+      enabled: true
+      mode: "off_market"    # CRITICAL: BTC = -$21K with ALL_HOURS, +$5.6K with OFF_MARKET
 
-  # SOL: 4H ENHANCED + FIXED_RR (32 trades/year, 26% return, 21% DD)
+  # ETH: 30m SIMPLE + FULL_SIGNAL + OFF_MARKET (118 trades/year, 41% return)
+  ETH:
+    enabled: true
+    timeframe: "30m"
+    signal_mode: "simple"
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    max_positions: 2
+    time_filter:
+      enabled: true
+      mode: "off_market"    # ETH benefits from OFF_MARKET
+
+  # SOL: 30m SIMPLE + FULL_SIGNAL + ALL_HOURS (153 trades/year, 86% return)
+  # NOTE: SOL is the best performer and works in all conditions
   SOL:
     enabled: true
-    timeframe: "4h"
-    signal_mode: "enhanced"
-    exit_strategy: "fixed_rr"
-    risk_reward: 2.0
-    anchor_level: 60
+    timeframe: "30m"
+    signal_mode: "simple"
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
     max_positions: 2
+    time_filter:
+      enabled: false        # SOL works best with ALL_HOURS (no filter)
 
 # ==============================================================================
 # VMC INDICATOR SETTINGS
@@ -105,10 +119,12 @@ indicators:
   wt_average_len: 12
   wt_ma_len: 3
 
-  # Overbought/Oversold levels
+  # SIMPLE mode thresholds (for ETH, SOL)
   wt_overbought_1: 53
-  wt_overbought_2: 60
   wt_oversold_1: -53
+
+  # ENHANCED mode thresholds (for BTC)
+  wt_overbought_2: 60
   wt_oversold_2: -60
 
   # Money Flow settings
@@ -131,19 +147,19 @@ stop_loss:
 # TAKE PROFIT CONFIGURATION
 # ==============================================================================
 take_profit:
-  # Default method (overridden per-asset above)
-  method: "fixed_rr"
-  risk_reward: 2.0
-
-  # Oscillator exit settings (for ETH's FULL_SIGNAL mode)
+  # All assets use FULL_SIGNAL exit (oscillator-based)
+  method: "oscillator"
   oscillator_mode: "full_signal"
 
-  # Partial TP settings (not used in V3.1 config)
+  # Fixed RR settings (not used in V3.2, but available)
+  risk_reward: 2.0
+
+  # Partial TP settings (not used in V3.2 config)
   partial_tp_percent: 50.0
   partial_tp_rr: 1.0
   move_sl_to_breakeven: true
 
-  # Trailing stop settings (not used in V3.1 config)
+  # Trailing stop settings (not used in V3.2 config)
   trailing_activation_rr: 1.5
   trailing_distance_percent: 1.0
 
@@ -176,3 +192,4 @@ backtest:
   end_date: "2024-12-17"
   initial_balance: 10000.0
   commission_percent: 0.06
+  slippage_percent: 0.03    # Added for realistic testing

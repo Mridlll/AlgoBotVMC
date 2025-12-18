@@ -253,6 +253,7 @@ def run_single_test(
             initial_balance=10000,
             risk_percent=1.5,
             commission_percent=0.06,
+            slippage_percent=0.03,  # 3 bps slippage per trade (realistic)
             risk_reward=2.0,
             signal_mode=signal_cfg["signal_mode"],
             simple_oversold=signal_cfg["simple_oversold"],
@@ -600,40 +601,54 @@ def save_results(results: List[TestResult], days: int):
 
 def main():
     parser = argparse.ArgumentParser(description="V3.1 Walk-Forward Validation")
-    parser.add_argument("--days", type=int, default=45, help="Number of days to test (default: 45)")
+    parser.add_argument("--days", type=int, default=45, help="Number of days to test (default: 45, use 0 for all data)")
     parser.add_argument("--quick", action="store_true", help="Quick test (3 deployed configs only)")
     parser.add_argument("--profitable", action="store_true", help="Test all 14 profitable configs from annual backtest")
+    parser.add_argument("--full", action="store_true", help="Test ALL 108 strategy variants (comprehensive)")
     parser.add_argument("--no-save", action="store_true", help="Don't save results to CSV")
     args = parser.parse_args()
+
+    # Use None for days if 0 or --full specified (loads all data)
+    days = None if args.days == 0 or args.full else args.days
 
     # Determine mode
     if args.quick:
         mode_desc = "Quick (3 deployed configs)"
     elif args.profitable:
         mode_desc = "Profitable (14 configs from annual backtest)"
-    else:
+    elif args.full:
         mode_desc = "Full (all 108 variants)"
+    else:
+        mode_desc = "Profitable (14 configs from annual backtest)"  # Default
+
+    period_desc = "All available data (~1 year)" if days is None else f"Last {days} days"
 
     print(f"""
 ================================================================================
   VMC Trading Bot - V3.1 Walk-Forward Validation
 ================================================================================
   Mode: {mode_desc}
-  Period: Last {args.days} days
+  Period: {period_desc}
 """)
 
-    # Run tests
-    results = run_full_test(days=args.days, quick=args.quick, profitable_only=args.profitable)
+    # Run tests - default to profitable if no specific mode selected
+    if args.full:
+        results = run_full_test(days=days, quick=False, profitable_only=False)
+    elif args.quick:
+        results = run_full_test(days=days, quick=True, profitable_only=False)
+    else:
+        results = run_full_test(days=days, quick=False, profitable_only=True)
 
     # Analyze
-    analysis = analyze_results(results, args.days)
+    days_for_report = days if days else 365  # Use 365 for "all data"
+    analysis = analyze_results(results, days_for_report)
 
     # Print report
-    print_report(results, analysis, args.days)
+    print_report(results, analysis, days_for_report)
 
     # Save results
     if not args.no_save:
-        save_results(results, args.days)
+        save_results(results, days_for_report)
 
 
 if __name__ == "__main__":
