@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
-from indicators import HeikinAshi, WaveTrend, MoneyFlow
+from indicators import HeikinAshi, WaveTrend, MoneyFlow, VWAPCalculator
 from indicators.heikin_ashi import convert_to_heikin_ashi
 from strategy.signals import (
     SignalDetector, Signal, SignalType, SimpleSignalDetector, Bias,
@@ -66,6 +66,11 @@ class BacktestTrade:
     pnl: float = 0.0
     pnl_percent: float = 0.0
     exit_reason: str = ""
+    # Indicator values at entry for client verification
+    wt1_entry: float = 0.0
+    wt2_entry: float = 0.0
+    mfi_entry: float = 0.0
+    vwap_entry: float = 0.0
 
     @property
     def is_winner(self) -> bool:
@@ -86,6 +91,10 @@ class BacktestTrade:
             "pnl_percent": self.pnl_percent,
             "exit_reason": self.exit_reason,
             "is_winner": self.is_winner,
+            "wt1_entry": self.wt1_entry,
+            "wt2_entry": self.wt2_entry,
+            "mfi_entry": self.mfi_entry,
+            "vwap_entry": self.vwap_entry,
         }
 
 
@@ -155,7 +164,12 @@ class BacktestResult:
                 "pnl_percent": round(t.pnl_percent, 2),
                 "exit_reason": t.exit_reason,
                 "result": "WIN" if t.pnl > 0 else "LOSS",
-                "running_balance": round(running_balance, 2)
+                "running_balance": round(running_balance, 2),
+                # Indicator values at entry for client verification
+                "wt1_entry": round(t.wt1_entry, 2),
+                "wt2_entry": round(t.wt2_entry, 2),
+                "mfi_entry": round(t.mfi_entry, 2),
+                "vwap_entry": round(t.vwap_entry, 2)
             })
 
         df = pd.DataFrame(rows)
@@ -218,7 +232,22 @@ class BacktestEngine:
         simple_oversold: float = -53,
         simple_overbought: float = 53,
         # Slippage parameter (realistic execution costs)
-        slippage_percent: float = 0.0
+        slippage_percent: float = 0.0,
+        # No stop loss mode (exit only on opposite signal)
+        use_stop_loss: bool = True,
+        # Trailing stop loss parameters
+        use_trailing_sl: bool = False,
+        trailing_activation_rr: float = 1.0,
+        trailing_distance_percent: float = 1.0,
+        # Dynamic ATR stop loss parameters (only used with DYNAMIC_ATR sl_method)
+        dynamic_sl_base_mult: float = 2.0,
+        dynamic_sl_high_vol_mult: float = 3.0,
+        dynamic_sl_low_vol_mult: float = 1.5,
+        volatility_lookback: int = 20,
+        # Regime filter (v4) - filters trades based on market regime
+        regime_detector: Optional[Any] = None,
+        # Direction filter (v5) - filter by trade direction
+        direction_filter: str = "both"  # "both", "long_only", "short_only"
     ):
         """
         Initialize backtest engine.
@@ -245,6 +274,15 @@ class BacktestEngine:
             simple_oversold: WT2 level for LONG signals in simple mode (original: -53)
             simple_overbought: WT2 level for SHORT signals in simple mode (original: +53)
             slippage_percent: Slippage per trade (%) - applied on both entry and exit (default: 0.0)
+            use_stop_loss: Enable stop loss (default: True). When False, only exit on opposite signal.
+            use_trailing_sl: Enable trailing stop loss (default: False)
+            trailing_activation_rr: R:R level to activate trailing stop (default: 1.0)
+            trailing_distance_percent: Trailing distance as % of price (default: 1.0%)
+            dynamic_sl_base_mult: Base ATR multiplier for normal volatility (default: 2.0)
+            dynamic_sl_high_vol_mult: ATR multiplier for high volatility (default: 3.0)
+            dynamic_sl_low_vol_mult: ATR multiplier for low volatility (default: 1.5)
+            volatility_lookback: Bars for volatility regime detection (default: 20)
+            direction_filter: Trade direction filter ('both', 'long_only', 'short_only')
         """
         self.initial_balance = initial_balance
         self.risk_percent = risk_percent
@@ -272,6 +310,26 @@ class BacktestEngine:
         # Slippage setting
         self.slippage_percent = slippage_percent
 
+        # Stop loss setting
+        self.use_stop_loss = use_stop_loss
+
+        # Trailing stop loss settings
+        self.use_trailing_sl = use_trailing_sl
+        self.trailing_activation_rr = trailing_activation_rr
+        self.trailing_distance_percent = trailing_distance_percent
+
+        # Dynamic ATR settings
+        self.dynamic_sl_base_mult = dynamic_sl_base_mult
+        self.dynamic_sl_high_vol_mult = dynamic_sl_high_vol_mult
+        self.dynamic_sl_low_vol_mult = dynamic_sl_low_vol_mult
+        self.volatility_lookback = volatility_lookback
+
+        # Regime filter (v4)
+        self.regime_detector = regime_detector
+
+        # Direction filter (v5)
+        self.direction_filter = direction_filter
+
         # Initialize components
         self.heikin_ashi = HeikinAshi()
         self.wavetrend = WaveTrend(
@@ -279,6 +337,7 @@ class BacktestEngine:
             oversold_2=int(anchor_level_long)
         )
         self.money_flow = MoneyFlow()
+        self.vwap_calc = VWAPCalculator()  # Real VWAP (not WT momentum diff)
 
         # Initialize signal detector based on mode
         if signal_mode == SignalMode.SIMPLE:
@@ -306,7 +365,12 @@ class BacktestEngine:
         self.risk_manager = RiskManager(
             default_risk_percent=risk_percent,
             default_rr=risk_reward,
-            swing_lookback=swing_lookback
+            swing_lookback=swing_lookback,
+            # Dynamic ATR parameters
+            dynamic_atr_base_mult=dynamic_sl_base_mult,
+            dynamic_atr_high_vol_mult=dynamic_sl_high_vol_mult,
+            dynamic_atr_low_vol_mult=dynamic_sl_low_vol_mult,
+            volatility_lookback=volatility_lookback
         )
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
@@ -334,12 +398,14 @@ class BacktestEngine:
         # Calculate indicators on full dataset
         wt_result = self.wavetrend.calculate(ha_df)
         mf_result = self.money_flow.calculate(ha_df)
+        vwap_result = self.vwap_calc.calculate(df)  # Use raw OHLCV for volume data
 
         # Trading state
         balance = self.initial_balance
         equity_curve = [balance]
         trades: List[BacktestTrade] = []
         active_trade: Optional[BacktestTrade] = None
+        initial_stop_loss: float = 0.0  # Track initial SL for trailing stop calculation
 
         # Previous indicator values for oscillator exit detection
         prev_wt1 = 0.0
@@ -359,7 +425,7 @@ class BacktestEngine:
             wt1 = wt_result.wt1.iloc[i]
             wt2 = wt_result.wt2.iloc[i]
             mfi = mf_result.mfi.iloc[i]
-            vwap = wt_result.vwap.iloc[i]
+            vwap = vwap_result.vwap.iloc[i]  # Use REAL VWAP, not WT momentum
 
             # Create subset DataFrames for signal detection
             wt_subset = type(wt_result)(
@@ -406,14 +472,33 @@ class BacktestEngine:
             if active_trade:
                 exit_reason = None
 
-                # Always check stop loss first (price-based)
+                # Check stop loss first (price-based) - only if enabled
                 is_long = active_trade.signal_type == SignalType.LONG
-                if is_long:
-                    if current_low <= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
-                else:
-                    if current_high >= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
+
+                # Update trailing stop if enabled
+                if self.use_trailing_sl and self.use_stop_loss and initial_stop_loss != 0:
+                    new_sl = self.risk_manager.calculate_trailing_stop(
+                        current_price=current_price,
+                        entry_price=active_trade.entry_price,
+                        stop_loss_price=initial_stop_loss,  # Use initial SL for R:R calculation
+                        current_stop=active_trade.stop_loss,
+                        is_long=is_long,
+                        trailing_distance_percent=self.trailing_distance_percent,
+                        activation_rr=self.trailing_activation_rr
+                    )
+                    # Only update if new stop is better (higher for longs, lower for shorts)
+                    if is_long and new_sl > active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+                    elif not is_long and new_sl < active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+
+                if self.use_stop_loss:
+                    if is_long:
+                        if current_low <= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
+                    else:
+                        if current_high >= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
 
                 # Check take profit based on method
                 if not exit_reason:
@@ -458,8 +543,25 @@ class BacktestEngine:
 
             # Check for new signals (only if no active trade)
             if not active_trade and signal:
+                # Check direction filter (v5) - before time/regime filters
+                if self.direction_filter == "long_only" and signal.signal_type != SignalType.LONG:
+                    signal = None  # Skip non-long signals
+                elif self.direction_filter == "short_only" and signal.signal_type != SignalType.SHORT:
+                    signal = None  # Skip non-short signals
+
+            if not active_trade and signal:
                 # Check time filter (v3)
                 can_trade, position_multiplier = self._check_time_filter(current_time)
+
+                # Check regime filter (v4) - after time filter, before trade
+                if can_trade and self.regime_detector is not None:
+                    regime_can_trade, regime_mult = self.regime_detector.check_regime_filter(
+                        df.iloc[:i+1], current_time
+                    )
+                    if not regime_can_trade:
+                        can_trade = False
+                    else:
+                        position_multiplier *= regime_mult
 
                 if can_trade:
                     # Open new trade
@@ -467,6 +569,8 @@ class BacktestEngine:
                         signal, balance, df.iloc[:i+1], current_time,
                         position_multiplier=position_multiplier
                     )
+                    # Store initial stop loss for trailing stop calculation
+                    initial_stop_loss = active_trade.stop_loss
 
                     # Apply entry commission
                     commission = (active_trade.entry_price * active_trade.size) * (self.commission_percent / 100)
@@ -551,12 +655,14 @@ class BacktestEngine:
         # Calculate LTF indicators
         wt_result = self.wavetrend.calculate(ha_df)
         mf_result = self.money_flow.calculate(ha_df)
+        vwap_result = self.vwap_calc.calculate(ltf_data)  # Use raw OHLCV for volume data
 
         # Trading state
         balance = self.initial_balance
         equity_curve = [balance]
         trades: List[BacktestTrade] = []
         active_trade: Optional[BacktestTrade] = None
+        initial_stop_loss: float = 0.0  # Track initial SL for trailing stop calculation
 
         # MTF-specific tracking
         signals_filtered = 0
@@ -581,7 +687,7 @@ class BacktestEngine:
             wt1 = wt_result.wt1.iloc[i]
             wt2 = wt_result.wt2.iloc[i]
             mfi = mf_result.mfi.iloc[i]
-            vwap = wt_result.vwap.iloc[i]
+            vwap = vwap_result.vwap.iloc[i]  # Use REAL VWAP, not WT momentum
 
             # Create indicator subsets
             wt_subset = type(wt_result)(
@@ -617,12 +723,30 @@ class BacktestEngine:
                 exit_reason = None
 
                 is_long = active_trade.signal_type == SignalType.LONG
-                if is_long:
-                    if current_low <= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
-                else:
-                    if current_high >= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
+
+                # Update trailing stop if enabled
+                if self.use_trailing_sl and self.use_stop_loss and initial_stop_loss != 0:
+                    new_sl = self.risk_manager.calculate_trailing_stop(
+                        current_price=current_price,
+                        entry_price=active_trade.entry_price,
+                        stop_loss_price=initial_stop_loss,
+                        current_stop=active_trade.stop_loss,
+                        is_long=is_long,
+                        trailing_distance_percent=self.trailing_distance_percent,
+                        activation_rr=self.trailing_activation_rr
+                    )
+                    if is_long and new_sl > active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+                    elif not is_long and new_sl < active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+
+                if self.use_stop_loss:
+                    if is_long:
+                        if current_low <= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
+                    else:
+                        if current_high >= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
 
                 if not exit_reason:
                     if self.tp_method == TakeProfitMethod.FIXED_RR:
@@ -673,6 +797,7 @@ class BacktestEngine:
                             signal, balance, ltf_data.iloc[:i+1], current_time,
                             position_multiplier=position_multiplier
                         )
+                        initial_stop_loss = active_trade.stop_loss
                         commission = (active_trade.entry_price * active_trade.size) * (self.commission_percent / 100)
                         balance -= commission
                 else:
@@ -759,12 +884,14 @@ class BacktestEngine:
         ha_df = convert_to_heikin_ashi(df)
         wt_result = self.wavetrend.calculate(ha_df)
         mf_result = self.money_flow.calculate(ha_df)
+        vwap_result = self.vwap_calc.calculate(df)  # Use raw OHLCV for volume data
 
         # Trading state
         balance = self.initial_balance
         equity_curve = [balance]
         trades: List[BacktestTrade] = []
         active_trade: Optional[BacktestTrade] = None
+        initial_stop_loss: float = 0.0  # Track initial SL for trailing stop calculation
 
         # Adaptive mode tracking
         current_mode = "enhanced"  # Start with enhanced
@@ -790,7 +917,7 @@ class BacktestEngine:
             wt1 = wt_result.wt1.iloc[i]
             wt2 = wt_result.wt2.iloc[i]
             mfi = mf_result.mfi.iloc[i]
-            vwap = wt_result.vwap.iloc[i]
+            vwap = vwap_result.vwap.iloc[i]  # Use REAL VWAP, not WT momentum
 
             # Analyze regime and potentially switch mode (only when not in trade)
             if not active_trade:
@@ -856,12 +983,29 @@ class BacktestEngine:
                 exit_reason = None
                 is_long = active_trade.signal_type == SignalType.LONG
 
-                if is_long:
-                    if current_low <= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
-                else:
-                    if current_high >= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
+                # Update trailing stop if enabled
+                if self.use_trailing_sl and self.use_stop_loss and initial_stop_loss != 0:
+                    new_sl = self.risk_manager.calculate_trailing_stop(
+                        current_price=current_price,
+                        entry_price=active_trade.entry_price,
+                        stop_loss_price=initial_stop_loss,
+                        current_stop=active_trade.stop_loss,
+                        is_long=is_long,
+                        trailing_distance_percent=self.trailing_distance_percent,
+                        activation_rr=self.trailing_activation_rr
+                    )
+                    if is_long and new_sl > active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+                    elif not is_long and new_sl < active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+
+                if self.use_stop_loss:
+                    if is_long:
+                        if current_low <= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
+                    else:
+                        if current_high >= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
 
                 if not exit_reason:
                     if self.tp_method == TakeProfitMethod.FIXED_RR:
@@ -901,6 +1045,7 @@ class BacktestEngine:
                         signal, balance, df.iloc[:i+1], current_time,
                         position_multiplier=position_multiplier
                     )
+                    initial_stop_loss = active_trade.stop_loss
                     commission = (active_trade.entry_price * active_trade.size) * (self.commission_percent / 100)
                     balance -= commission
 
@@ -1001,6 +1146,8 @@ class BacktestEngine:
         htf_mf = self.money_flow.calculate(htf_ha)
         ltf_wt = self.wavetrend.calculate(ltf_ha)
         ltf_mf = self.money_flow.calculate(ltf_ha)
+        htf_vwap = self.vwap_calc.calculate(htf_data)  # HTF VWAP
+        ltf_vwap = self.vwap_calc.calculate(ltf_data)  # LTF VWAP
 
         # Build HTF timestamp -> index mapping
         htf_timestamps = htf_data.index.tolist()
@@ -1011,6 +1158,7 @@ class BacktestEngine:
         equity_curve = [balance]
         trades: List[BacktestTrade] = []
         active_trade: Optional[BacktestTrade] = None
+        initial_stop_loss: float = 0.0  # Track initial SL for trailing stop calculation
 
         # V4 tracking stats
         htf_bias_updates = 0
@@ -1103,13 +1251,30 @@ class BacktestEngine:
                 exit_reason = None
                 is_long = active_trade.signal_type == SignalType.LONG
 
-                # Check stop loss first
-                if is_long:
-                    if current_low <= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
-                else:
-                    if current_high >= active_trade.stop_loss:
-                        exit_reason = "stop_loss"
+                # Update trailing stop if enabled
+                if self.use_trailing_sl and self.use_stop_loss and initial_stop_loss != 0:
+                    new_sl = self.risk_manager.calculate_trailing_stop(
+                        current_price=current_price,
+                        entry_price=active_trade.entry_price,
+                        stop_loss_price=initial_stop_loss,
+                        current_stop=active_trade.stop_loss,
+                        is_long=is_long,
+                        trailing_distance_percent=self.trailing_distance_percent,
+                        activation_rr=self.trailing_activation_rr
+                    )
+                    if is_long and new_sl > active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+                    elif not is_long and new_sl < active_trade.stop_loss:
+                        active_trade.stop_loss = new_sl
+
+                # Check stop loss first (only if enabled)
+                if self.use_stop_loss:
+                    if is_long:
+                        if current_low <= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
+                    else:
+                        if current_high >= active_trade.stop_loss:
+                            exit_reason = "stop_loss"
 
                 # Check take profit
                 if not exit_reason:
@@ -1155,6 +1320,8 @@ class BacktestEngine:
                     )
                     commission = (active_trade.entry_price * active_trade.size) * (self.commission_percent / 100)
                     balance -= commission
+                    # Store initial stop loss for trailing stop calculation
+                    initial_stop_loss = active_trade.stop_loss
 
             # Update equity curve
             if active_trade:
@@ -1279,7 +1446,11 @@ class BacktestEngine:
             exit_price=None,
             size=size,
             stop_loss=stop_loss,
-            take_profit=take_profit
+            take_profit=take_profit,
+            wt1_entry=signal.wt1,
+            wt2_entry=signal.wt2,
+            mfi_entry=signal.mfi,
+            vwap_entry=signal.vwap
         )
 
     def _check_exit(
@@ -1293,15 +1464,15 @@ class BacktestEngine:
         is_long = trade.signal_type == SignalType.LONG
 
         if is_long:
-            # Check stop loss (use low for worst-case)
-            if low <= trade.stop_loss:
+            # Check stop loss (use low for worst-case) - only if enabled
+            if self.use_stop_loss and low <= trade.stop_loss:
                 return "stop_loss"
             # Check take profit (use high for best-case)
             if high >= trade.take_profit:
                 return "take_profit"
         else:
             # Short position
-            if high >= trade.stop_loss:
+            if self.use_stop_loss and high >= trade.stop_loss:
                 return "stop_loss"
             if low <= trade.take_profit:
                 return "take_profit"

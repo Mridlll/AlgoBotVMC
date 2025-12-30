@@ -26,6 +26,9 @@ if "%1"=="production" (
 ) else if "%1"=="prod" (
     set CONFIG_FILE=config\config_production.yaml
     echo [*] Using PRODUCTION config
+) else if "%1"=="v6" (
+    set CONFIG_FILE=config\config_v6_production.yaml
+    echo [*] Using V6 PRODUCTION config (15 strategies)
 ) else if not "%1"=="" (
     set CONFIG_FILE=%1
     echo [*] Using custom config: %1
