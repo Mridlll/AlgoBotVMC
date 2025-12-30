@@ -14,6 +14,7 @@ class StopLossMethod(str, Enum):
     SWING = "swing"
     ATR = "atr"
     FIXED_PERCENT = "fixed_percent"
+    DYNAMIC_ATR = "dynamic_atr"  # Volatility-adaptive ATR-based SL
 
 
 class TakeProfitMethod(str, Enum):
@@ -54,7 +55,12 @@ class RiskManager:
         swing_buffer_percent: float = 0.5,
         atr_period: int = 14,
         atr_multiplier: float = 1.5,
-        fixed_sl_percent: float = 2.0
+        fixed_sl_percent: float = 2.0,
+        # Dynamic ATR parameters
+        dynamic_atr_base_mult: float = 2.0,
+        dynamic_atr_high_vol_mult: float = 3.0,
+        dynamic_atr_low_vol_mult: float = 1.5,
+        volatility_lookback: int = 20
     ):
         """
         Initialize risk manager.
@@ -68,6 +74,10 @@ class RiskManager:
             atr_period: ATR calculation period
             atr_multiplier: ATR multiplier for SL distance
             fixed_sl_percent: Fixed SL distance (%)
+            dynamic_atr_base_mult: Base ATR multiplier for normal volatility
+            dynamic_atr_high_vol_mult: ATR multiplier for high volatility (wider stop)
+            dynamic_atr_low_vol_mult: ATR multiplier for low volatility (tighter stop)
+            volatility_lookback: Bars to look back for volatility regime detection
         """
         self.default_risk_percent = default_risk_percent
         self.default_leverage = default_leverage
@@ -77,6 +87,11 @@ class RiskManager:
         self.atr_period = atr_period
         self.atr_multiplier = atr_multiplier
         self.fixed_sl_percent = fixed_sl_percent
+        # Dynamic ATR parameters
+        self.dynamic_atr_base_mult = dynamic_atr_base_mult
+        self.dynamic_atr_high_vol_mult = dynamic_atr_high_vol_mult
+        self.dynamic_atr_low_vol_mult = dynamic_atr_low_vol_mult
+        self.volatility_lookback = volatility_lookback
 
     def calculate_position_size(
         self,
@@ -117,6 +132,12 @@ class RiskManager:
         # With leverage: effective position can be larger
         position_size = risk_amount / price_diff
 
+        # Cap position at max leverage (default 3x account size)
+        max_leverage = lev if lev > 1 else 3.0  # Use leverage param or default to 3x
+        max_position_value = account_balance * max_leverage
+        max_position_size = max_position_value / entry_price
+        position_size = min(position_size, max_position_size)
+
         # Round to tick size
         if tick_size > 0:
             position_size = round_to_tick(position_size, tick_size)
@@ -152,6 +173,8 @@ class RiskManager:
             return self._atr_stop_loss(entry_price, is_long, df)
         elif method == StopLossMethod.FIXED_PERCENT:
             return self._fixed_stop_loss(entry_price, is_long)
+        elif method == StopLossMethod.DYNAMIC_ATR:
+            return self._dynamic_atr_stop_loss(entry_price, is_long, df)
         else:
             return self._swing_stop_loss(entry_price, is_long, df, buffer)
 
@@ -203,6 +226,64 @@ class RiskManager:
             return entry_price - sl_distance
         else:
             return entry_price + sl_distance
+
+    def _dynamic_atr_stop_loss(
+        self,
+        entry_price: float,
+        is_long: bool,
+        df: pd.DataFrame
+    ) -> float:
+        """
+        Calculate dynamic ATR-based stop loss that adapts to volatility regime.
+
+        In high volatility: Uses wider stops (3x ATR) to avoid noise
+        In low volatility: Uses tighter stops (1.5x ATR) to limit losses
+        In normal volatility: Uses base multiplier (2x ATR)
+
+        Args:
+            entry_price: Entry price
+            is_long: True for long positions
+            df: DataFrame with OHLC data
+
+        Returns:
+            Stop loss price
+        """
+        # Calculate current ATR
+        current_atr = self._calculate_atr(df, self.atr_period)
+
+        # Calculate ATR series for volatility regime detection
+        atr_series = self._calculate_atr_series(df, self.atr_period)
+
+        # Determine volatility percentile over lookback period
+        lookback = min(self.volatility_lookback, len(atr_series) - 1)
+        if lookback < 2:
+            # Not enough data, use base multiplier
+            multiplier = self.dynamic_atr_base_mult
+        else:
+            recent_atrs = atr_series.iloc[-lookback:]
+            current_atr_val = atr_series.iloc[-1]
+
+            # Calculate percentile rank (0-1)
+            percentile = (recent_atrs < current_atr_val).sum() / len(recent_atrs)
+
+            # Select multiplier based on volatility regime
+            if percentile >= 0.75:
+                # High volatility - use wider stop to avoid noise
+                multiplier = self.dynamic_atr_high_vol_mult
+            elif percentile <= 0.25:
+                # Low volatility - use tighter stop
+                multiplier = self.dynamic_atr_low_vol_mult
+            else:
+                # Normal volatility
+                multiplier = self.dynamic_atr_base_mult
+
+        # Calculate stop distance
+        atr_distance = current_atr * multiplier
+
+        if is_long:
+            return entry_price - atr_distance
+        else:
+            return entry_price + atr_distance
 
     def calculate_take_profit(
         self,
@@ -384,6 +465,31 @@ class RiskManager:
         atr = tr.rolling(window=period).mean().iloc[-1]
 
         return atr
+
+    @staticmethod
+    def _calculate_atr_series(df: pd.DataFrame, period: int) -> pd.Series:
+        """
+        Calculate ATR series for volatility regime detection.
+
+        Args:
+            df: DataFrame with OHLC data
+            period: ATR calculation period
+
+        Returns:
+            Series of ATR values
+        """
+        high = df['high']
+        low = df['low']
+        close = df['close'].shift(1)
+
+        tr1 = high - low
+        tr2 = abs(high - close)
+        tr3 = abs(low - close)
+
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr_series = tr.rolling(window=period).mean()
+
+        return atr_series
 
     def find_swing_low(self, df: pd.DataFrame, lookback: Optional[int] = None) -> float:
         """Find the lowest low in recent candles."""

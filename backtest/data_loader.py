@@ -11,7 +11,7 @@ sys.path.insert(0, str(project_root / "src"))
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pathlib import Path
 import asyncio
 
@@ -21,6 +21,9 @@ from exchanges.bitunix import BitunixExchange
 from utils.logger import get_logger
 
 logger = get_logger("data_loader")
+
+# Default binance cache directory
+BINANCE_CACHE_DIR = project_root / "data" / "binance_cache"
 
 
 class DataLoader:
@@ -241,6 +244,137 @@ class DataLoader:
         df.sort_index(inplace=True)
 
         return df
+
+    def aggregate_to_higher_timeframe(
+        self,
+        df: pd.DataFrame,
+        target_tf: str
+    ) -> pd.DataFrame:
+        """
+        Aggregate lower timeframe data to higher timeframe.
+
+        Args:
+            df: Source DataFrame with OHLCV data (must have datetime index)
+            target_tf: Target timeframe ('8h', '12h', '1d', etc.)
+
+        Returns:
+            DataFrame aggregated to target timeframe
+        """
+        # Map target timeframe to pandas resample rule (using lowercase for pandas 2.x)
+        tf_map = {
+            '8h': '8h',
+            '12h': '12h',
+            '1d': '1D',
+            '1D': '1D',
+            '2d': '2D',
+            '1w': '1W',
+        }
+
+        rule = tf_map.get(target_tf, target_tf.upper())
+
+        try:
+            aggregated = df.resample(rule).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+
+            logger.info(f"Aggregated {len(df)} bars to {len(aggregated)} {target_tf} bars")
+            return aggregated
+
+        except Exception as e:
+            logger.error(f"Error aggregating to {target_tf}: {e}")
+            return pd.DataFrame()
+
+    def load_multiple_timeframes(
+        self,
+        symbol: str,
+        timeframes: List[str],
+        cache_dir: Optional[Path] = None
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Load cached data for multiple timeframes.
+
+        Supports loading existing cached data and aggregating to higher
+        timeframes (12h, 1d) from 4h data if not directly available.
+
+        Args:
+            symbol: Trading symbol (e.g., 'BTC', 'ETH', 'SOL')
+            timeframes: List of timeframes to load (e.g., ['15m', '4h', '12h', '1d'])
+            cache_dir: Cache directory (defaults to BINANCE_CACHE_DIR)
+
+        Returns:
+            Dict mapping timeframe to DataFrame
+        """
+        if cache_dir is None:
+            cache_dir = BINANCE_CACHE_DIR
+
+        data = {}
+        base_tf = "4h"  # Base HTF data for aggregation
+
+        for tf in timeframes:
+            # Try direct load first
+            path = cache_dir / f"{symbol.lower()}_{tf}.csv"
+
+            if path.exists():
+                try:
+                    df = pd.read_csv(path, parse_dates=['timestamp'], index_col='timestamp')
+                    data[tf] = df
+                    logger.info(f"Loaded {len(df)} bars for {symbol}/{tf}")
+                except Exception as e:
+                    logger.error(f"Error loading {path}: {e}")
+
+            elif tf in ['8h', '12h', '1d', '1D']:
+                # Aggregate from 4h data
+                base_path = cache_dir / f"{symbol.lower()}_{base_tf}.csv"
+
+                if base_path.exists():
+                    try:
+                        base_df = pd.read_csv(base_path, parse_dates=['timestamp'], index_col='timestamp')
+                        aggregated = self.aggregate_to_higher_timeframe(base_df, tf)
+
+                        if not aggregated.empty:
+                            data[tf] = aggregated
+                            logger.info(f"Aggregated {symbol}/{base_tf} to {tf}: {len(aggregated)} bars")
+                    except Exception as e:
+                        logger.error(f"Error aggregating {symbol}/{tf}: {e}")
+                else:
+                    logger.warning(f"Cannot create {tf} data: no {base_tf} data available for {symbol}")
+            else:
+                logger.warning(f"No data available for {symbol}/{tf}")
+
+        return data
+
+    def load_ltf_htf_pair(
+        self,
+        symbol: str,
+        ltf: str,
+        htf_list: List[str],
+        cache_dir: Optional[Path] = None
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Load LTF data and multiple HTF data for MTF backtesting.
+
+        Args:
+            symbol: Trading symbol
+            ltf: Lower timeframe for entries (e.g., '15m', '30m')
+            htf_list: List of higher timeframes for bias (e.g., ['4h', '12h', '1d'])
+            cache_dir: Cache directory
+
+        Returns:
+            Dict with 'ltf' key and 'htf' dict containing each HTF DataFrame
+        """
+        all_tfs = [ltf] + htf_list
+        data = self.load_multiple_timeframes(symbol, all_tfs, cache_dir)
+
+        result = {
+            'ltf': data.get(ltf),
+            'htf': {tf: data.get(tf) for tf in htf_list if tf in data}
+        }
+
+        return result
 
     @staticmethod
     def generate_sample_data(

@@ -1,0 +1,35 @@
+[Unit]
+Description=VMC Trading Bot V6
+Documentation=https://github.com/YourUsername/vmc_trading_bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Update these paths for your system:
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/vmc_trading_bot
+ExecStart=/home/YOUR_USERNAME/vmc_trading_bot/venv/bin/python run_production.py --config config/config.yaml
+
+# Restart policy
+Restart=always
+RestartSec=30
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/YOUR_USERNAME/vmc_trading_bot/logs
+ReadWritePaths=/home/YOUR_USERNAME/vmc_trading_bot/data
+PrivateTmp=true
+
+# Logging
+StandardOutput=append:/home/YOUR_USERNAME/vmc_trading_bot/logs/systemd.log
+StandardError=append:/home/YOUR_USERNAME/vmc_trading_bot/logs/systemd.log
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

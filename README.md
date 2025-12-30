@@ -1,33 +1,129 @@
-# VMC Trading Bot
+# VMC Trading Bot V6
 
-Automated cryptocurrency trading bot using the **VuManChu Cipher B** (VMC) indicator strategy. Supports live trading on Hyperliquid and comprehensive backtesting with multiple exit strategies.
+Automated cryptocurrency trading bot based on the VuManChu Cipher B indicator strategy. Trades BTC, ETH, and SOL perpetual futures on Hyperliquid exchange.
 
-> **New to the bot?** See [SETUP.md](SETUP.md) for complete step-by-step instructions.
+## Performance Summary
 
-## Features
+**Backtest Period:** December 2023 - December 2024 (1 Year)
+**Starting Capital:** $10,000
+**Risk Per Trade:** 3%
 
-- **VMC Signal Detection**: Anchor wave → Trigger wave → MFI confirmation → VWAP cross
-- **Multiple Exit Strategies**: Fixed R:R, Full Signal, WT Cross, 1st Reversal
-- **Hyperliquid Integration**: Live trading on Hyperliquid perpetual futures
-- **Comprehensive Backtesting**: Multi-asset, multi-timeframe analysis
-- **Risk Management**: Configurable position sizing and stop loss methods
-- **Discord Notifications**: Real-time trade alerts
+| Metric | Value |
+|--------|-------|
+| **Total PnL** | $974,457 |
+| **Average Sharpe Ratio** | 2.79 |
+| **Win Rate** | 31-47% |
+| **Profit Factor** | 1.14-6.27 |
+
+### Per-Asset Performance
+
+| Asset | Net PnL | VWAP Filter | Strategies |
+|-------|---------|-------------|------------|
+| BTC | $99,716 | Enabled | 5 |
+| ETH | $237,340 | Disabled | 5 |
+| SOL | $485,072 | Disabled | 5 |
+
+### Top Strategies
+
+| Strategy | PnL | Sharpe | Time Filter |
+|----------|-----|--------|-------------|
+| SOL 5m SIMPLE | $166,586 | 1.26 | NY Hours |
+| SOL 5m ENHANCED_60 | $152,788 | 1.39 | NY Hours |
+| ETH 5m SIMPLE | $78,946 | 0.93 | NY Hours |
+| SOL 1h ENHANCED_70 | $74,115 | 6.88 | Weekends |
+| BTC 5m ENHANCED_60 | $54,339 | 2.82 | NY Hours |
 
 ---
 
 ## Quick Start
 
-### 1. Installation
+```bash
+# 1. Clone the repository
+git clone https://github.com/YourUsername/vmc_trading_bot.git
+cd vmc_trading_bot
+
+# 2. Run setup (creates virtual environment, installs dependencies)
+# Windows:
+setup.bat
+# Linux/Mac:
+./setup.sh
+
+# 3. Run the configuration wizard
+python setup_wizard.py
+
+# 4. Start the bot
+# Windows:
+run_bot.bat
+# Linux/Mac:
+./run_bot.sh
+
+# Or use production mode with auto-restart:
+python run_production.py
+```
+
+---
+
+## Prerequisites
+
+- **Python 3.10+** - [Download Python](https://www.python.org/downloads/)
+- **Hyperliquid Account** - [Sign Up](https://app.hyperliquid.xyz)
+- **USDC Funds** - Deposit USDC to your Hyperliquid wallet
+- **Discord** (optional) - For trade notifications
+
+---
+
+## Hyperliquid Wallet Setup
+
+Hyperliquid uses a two-wallet architecture for security:
+
+### 1. Main Wallet (Holds Funds)
+- This is your primary wallet connected to Hyperliquid
+- Deposit USDC here
+- Note your wallet address (0x...)
+
+### 2. API Wallet (Signs Trades)
+1. Go to https://app.hyperliquid.xyz/API
+2. Click **"Generate API Wallet"**
+3. **SAVE THE PRIVATE KEY** - You will only see it once!
+4. Note the API wallet address
+5. Authorize the API wallet to trade on your behalf
+
+### Security Notes
+- The API wallet can only trade - it cannot withdraw funds
+- Your main wallet funds are protected even if API key is compromised
+- Never share your private key with anyone
+- Store the private key in a password manager
+
+---
+
+## Installation
+
+### Automatic Setup (Recommended)
+
+**Windows:**
+```batch
+setup.bat
+```
+
+**Linux/Mac:**
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+This will:
+- Create a Python virtual environment
+- Install all dependencies
+- Create necessary directories
+- Copy the example config file
+
+### Manual Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/Mridlll/AlgoBotVMC.git
-cd AlgoBotVMC
-
 # Create virtual environment
 python -m venv venv
 
-# Activate virtual environment
+# Activate it
 # Windows:
 venv\Scripts\activate
 # Linux/Mac:
@@ -35,287 +131,339 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
-```
 
-### 2. Configuration
-
-```bash
-# Copy example config
-cp config/config.example.yaml config/config.yaml
-
-# Edit with your settings
-notepad config/config.yaml  # Windows
-nano config/config.yaml     # Linux/Mac
-```
-
-### 3. Run Backtest
-
-```bash
-# Run comprehensive backtest
-python fetch_and_backtest.py
-```
-
-### 4. Run Live Bot
-
-```bash
-# Start the trading bot
-python run.py
+# Create directories
+mkdir -p data logs
 ```
 
 ---
 
-## Configuration Guide
+## Configuration
 
-### Exchange Setup (Hyperliquid)
+### Using the Setup Wizard (Recommended)
+
+```bash
+python setup_wizard.py
+```
+
+The wizard guides you through:
+1. Wallet configuration (addresses, private key)
+2. Risk settings (risk per trade, leverage)
+3. Strategy selection (15 strategies available)
+4. Discord notifications (optional)
+
+### Manual Configuration
+
+Edit `config/config.yaml`:
 
 ```yaml
 exchange:
   name: "hyperliquid"
-  api_key: ""                    # Leave empty for Hyperliquid
-  api_secret: "your_private_key" # Your wallet private key
-  wallet_address: "0x..."        # Your wallet address
-  testnet: true                  # Set false for mainnet
-```
+  api_secret: "0x..."           # Your API wallet private key
+  wallet_address: "0x..."       # Your API wallet address
+  account_address: "0x..."      # Your main wallet address
+  testnet: true                 # Start with testnet!
 
-**Getting Hyperliquid Credentials:**
-1. Go to [Hyperliquid](https://app.hyperliquid.xyz/)
-2. Connect your wallet
-3. Export your private key (keep it secure!)
-4. Copy your wallet address
-
-### Trading Parameters
-
-```yaml
 trading:
-  assets:
-    - "BTC"
-    - "ETH"
-    - "SOL"
-  timeframe: "30m"      # Recommended: 30m (best performance)
-  risk_percent: 3.0     # Risk 3% of account per trade
-  max_positions: 3      # Maximum open positions
-  leverage: 1.0         # Leverage multiplier
-```
+  risk_percent: 2.0             # Risk per trade (1-5%)
+  leverage: 2.0                 # 1-5x leverage
+  max_positions: 3              # Max simultaneous positions
 
-### Exit Strategies
-
-```yaml
-take_profit:
-  method: "oscillator"           # Options: fixed_rr, oscillator
-  risk_reward: 2.0               # For fixed_rr method
-  oscillator_mode: "wt_cross"    # For oscillator method
-```
-
-| Method | oscillator_mode | Description |
-|--------|-----------------|-------------|
-| `fixed_rr` | - | Exit at fixed 2:1 risk-reward ratio |
-| `oscillator` | `full_signal` | Exit on complete opposite VMC signal |
-| `oscillator` | `wt_cross` | Exit when WT1 crosses WT2 opposite direction |
-| `oscillator` | `first_reversal` | Exit on first reversal sign (fastest) |
-
-### Stop Loss Configuration
-
-```yaml
-stop_loss:
-  method: "swing"         # Options: swing, atr, fixed_percent
-  swing_lookback: 5       # Candles to look back
-  buffer_percent: 0.5     # Buffer below/above swing level
-  atr_multiplier: 1.5     # For ATR method
-  fixed_percent: 2.0      # For fixed percent method
-```
-
-### VMC Indicator Settings
-
-```yaml
-indicators:
-  wt_channel_len: 9
-  wt_average_len: 12
-  wt_ma_len: 3
-  wt_overbought_2: 60     # Anchor level for shorts
-  wt_oversold_2: -60      # Anchor level for longs
-  mfi_period: 60
-  mfi_multiplier: 150.0
-```
-
----
-
-## Strategy Explanation
-
-### VMC Signal Detection (4-Step Process)
-
-1. **Anchor Wave**: WT2 crosses into extreme zone (< -60 for longs, > +60 for shorts)
-2. **Trigger Wave**: WT2 crosses back from extreme zone
-3. **MFI Confirmation**: Money Flow confirms direction (green for long, red for short)
-4. **VWAP Cross**: VWAP crosses zero line in trade direction
-
-### Exit Strategies Explained
-
-| Strategy | When It Exits | Best For |
-|----------|---------------|----------|
-| **Fixed R:R** | At 2x risk distance | Ranging markets |
-| **Full Signal** | When all 4 conditions flip opposite | Strong trends |
-| **WT Cross** | When WT1 crosses WT2 opposite | Most conditions |
-| **1st Reversal** | First warning sign (MFI/VWAP/WT) | High volatility |
-
----
-
-## Backtesting
-
-### Quick Backtest
-
-```bash
-# Fetch data from Binance and run all backtests
-python fetch_and_backtest.py
-```
-
-This will:
-- Download 3 months of data for BTC, ETH, SOL
-- Test all 6 timeframes (3m, 5m, 15m, 30m, 1h, 4h)
-- Compare all 4 exit strategies
-- Generate report at `output/full_comparison_binance.txt`
-
-### Custom Backtest
-
-```python
-from backtest.engine import BacktestEngine
-from config import TakeProfitMethod, OscillatorExitMode
-
-engine = BacktestEngine(
-    initial_balance=10000,
-    risk_percent=3.0,
-    risk_reward=2.0,
-    tp_method=TakeProfitMethod.OSCILLATOR,
-    oscillator_mode=OscillatorExitMode.WT_CROSS
-)
-
-result = engine.run(df)  # df = your OHLCV DataFrame
-print(f"Win Rate: {result.win_rate}%")
-print(f"Total PnL: ${result.total_pnl}")
-```
-
----
-
-## Recommended Settings
-
-Based on backtesting 3 months of data (72 combinations tested):
-
-### Best Performing Setups
-
-| Rank | Asset | Timeframe | Strategy | Return | Max DD |
-|:----:|:-----:|:---------:|:---------|-------:|-------:|
-| 1 | ETH | 30m | Full Signal | +52.0% | 28.7% |
-| 2 | SOL | 30m | WT Cross | +45.3% | 12.8% |
-| 3 | BTC | 30m | Full Signal | +23.1% | 28.8% |
-
-### Optimal Configuration
-
-```yaml
-trading:
-  assets: ["ETH", "SOL", "BTC"]
-  timeframe: "30m"
-  risk_percent: 3.0
-
-take_profit:
-  method: "oscillator"
-  oscillator_mode: "wt_cross"  # Most consistent
-```
-
-### What to Avoid
-
-- **3m and 5m timeframes**: 80-90% drawdowns
-- **Fixed R:R on lower timeframes**: Underperforms oscillator exits
-- **4h timeframe**: Too few signals
-
----
-
-## Project Structure
-
-```
-AlgoBotVMC/
-├── config/
-│   ├── config.py              # Configuration models
-│   ├── config.yaml            # Your settings (create from example)
-│   └── config.example.yaml    # Example configuration
-├── src/
-│   ├── core/
-│   │   ├── bot.py             # Main bot logic
-│   │   └── state.py           # State management
-│   ├── exchanges/
-│   │   ├── base.py            # Exchange interface
-│   │   └── hyperliquid.py     # Hyperliquid implementation
-│   ├── indicators/
-│   │   ├── wavetrend.py       # WaveTrend indicator
-│   │   ├── money_flow.py      # Money Flow indicator
-│   │   └── heikin_ashi.py     # Heikin Ashi candles
-│   ├── strategy/
-│   │   ├── signals.py         # Signal detection
-│   │   ├── risk.py            # Risk management
-│   │   └── trade_manager.py   # Trade execution
-│   └── main.py                # Entry point
-├── backtest/
-│   ├── engine.py              # Backtest engine
-│   ├── data_loader.py         # Data fetching
-│   └── metrics.py             # Performance metrics
-├── output/
-│   └── *.txt                  # Generated reports
-├── run.py                     # Start the bot
-├── fetch_and_backtest.py      # Run backtests
-└── requirements.txt           # Dependencies
-```
-
----
-
-## Discord Notifications
-
-Enable Discord alerts for trade notifications:
-
-```yaml
 discord:
   enabled: true
   webhook_url: "https://discord.com/api/webhooks/..."
-  notify_on_signal: true
-  notify_on_trade_open: true
-  notify_on_trade_close: true
+```
+
+### Strategy Configuration
+
+All 15 strategies are enabled by default. To disable a strategy:
+
+```yaml
+strategies:
+  btc_5m_enhanced60_ny:
+    enabled: false              # Set to false to disable
 ```
 
 ---
 
-## Commands
+## Running the Bot
 
-| Command | Description |
-|---------|-------------|
-| `python run.py` | Start live trading bot |
-| `python fetch_and_backtest.py` | Run comprehensive backtest |
-| `python run_comparison_backtest.py` | Compare exit strategies |
-| `python test_hyperliquid_live.py` | Test Hyperliquid connection |
+### Basic Mode
+
+```bash
+# Windows
+run_bot.bat
+
+# Linux/Mac
+./run_bot.sh
+```
+
+### Production Mode (Recommended)
+
+The production runner includes:
+- Auto-restart on crash with exponential backoff
+- Emergency position closing on crash
+- Health monitoring and logging
+- State persistence across restarts
+
+```bash
+python run_production.py --config config/config.yaml
+```
+
+Options:
+```
+--config, -c        Config file path (default: config/config.yaml)
+--max-restarts, -m  Max restart attempts (default: 10)
+--no-close-positions Don't close positions on crash
+--reset-state       Reset restart counter
+```
+
+### Running as a Service
+
+See the [Service Setup](#service-setup) section below for running the bot automatically on system boot.
+
+---
+
+## Monitoring
+
+### Log Files
+
+- `logs/production.log` - Main bot activity
+- `logs/bot.log` - Detailed trading logs
+
+### Discord Notifications
+
+When enabled, you'll receive notifications for:
+- Bot started/stopped
+- Trade opened (entry price, size, stop loss)
+- Trade closed (exit price, PnL)
+- Errors and crashes
+
+### Hyperliquid Dashboard
+
+View your positions at: https://app.hyperliquid.xyz
+
+---
+
+## Strategy Overview
+
+### How It Works
+
+1. **Data Collection**: Fetches OHLCV candles from Hyperliquid
+2. **Heikin Ashi**: Converts to smoothed candles
+3. **Indicators**: Calculates WaveTrend oscillator and MFI
+4. **Signal Detection**:
+   - LONG: WT1 crosses above WT2 from oversold (-53/-60/-70)
+   - SHORT: WT1 crosses below WT2 from overbought (+53/+60/+70)
+5. **VWAP Confirmation** (BTC only):
+   - LONG: Price must be above VWAP
+   - SHORT: Price must be below VWAP
+6. **Entry**: Market order with ATR-based stop loss
+7. **Exit**: Wait for opposite WaveTrend signal OR stop loss hit
+
+### Time Filters
+
+- **NY_HOURS_ONLY**: Weekdays 14:00-21:00 UTC (NYSE trading hours)
+- **WEEKENDS_ONLY**: Saturday and Sunday only
+
+### Risk Management
+
+| Parameter | Value |
+|-----------|-------|
+| Stop Loss | 2 x ATR(14) |
+| Exit Strategy | Opposite WaveTrend signal |
+| Max Positions | 1 per asset |
+| Commission | 0.06% (Hyperliquid maker fee) |
+
+### Why Low Win Rate Works
+
+- Win rate is 31-47% but average wins are 2-7x larger than losses
+- The strategy lets winners run and cuts losers quickly
+- Sharpe ratios above 2.0 indicate excellent risk-adjusted returns
+
+---
+
+## Service Setup
+
+### Linux (systemd)
+
+1. Create the service file:
+
+```bash
+sudo nano /etc/systemd/system/vmc-bot.service
+```
+
+2. Add this content (adjust paths):
+
+```ini
+[Unit]
+Description=VMC Trading Bot V6
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/vmc_trading_bot
+ExecStart=/path/to/vmc_trading_bot/venv/bin/python run_production.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+3. Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable vmc-bot
+sudo systemctl start vmc-bot
+```
+
+4. Check status:
+
+```bash
+sudo systemctl status vmc-bot
+```
+
+### Windows (Task Scheduler)
+
+1. Open Task Scheduler
+2. Create Basic Task -> Name: "VMC Trading Bot"
+3. Trigger: "When the computer starts"
+4. Action: "Start a program"
+5. Program: `C:\path\to\vmc_trading_bot\venv\Scripts\python.exe`
+6. Arguments: `run_production.py`
+7. Start in: `C:\path\to\vmc_trading_bot`
+8. Check "Run with highest privileges"
+9. Check "Run whether user is logged on or not"
 
 ---
 
 ## Troubleshooting
 
-### Hyperliquid Connection Issues
+### "Config file not found"
 
-```python
-# Test connection
-python test_hyperliquid_live.py
+Run the setup wizard first:
+```bash
+python setup_wizard.py
 ```
 
-### Rate Limiting
+### "Failed to connect to exchange"
 
-If you see 429 errors, the bot automatically handles rate limiting with exponential backoff.
+1. Check your internet connection
+2. Verify wallet addresses are correct (start with 0x, 42 characters)
+3. Verify private key is correct (64 hex characters)
+4. Check if Hyperliquid is operational
 
-### Missing Data
+### "Insufficient margin"
 
-Backtest data is cached in `data/binance_cache/`. Delete this folder to re-fetch.
+1. Add more USDC to your account
+2. Reduce position size (lower risk_percent)
+3. Reduce leverage
+
+### "Order failed"
+
+1. Check if the market is open
+2. Verify you have enough margin
+3. Check for rate limiting (too many orders)
+
+### Bot Not Taking Trades
+
+1. Check time filter settings (NY hours or weekends)
+2. Verify strategy is enabled in config
+3. Check logs for signal detection: `logs/bot.log`
+
+### View Logs
+
+```bash
+# Windows
+type logs\production.log
+
+# Linux/Mac
+tail -f logs/production.log
+```
 
 ---
 
-## Disclaimer
+## File Structure
 
-This software is for educational purposes only. Cryptocurrency trading involves substantial risk of loss. Past performance does not guarantee future results. Use at your own risk.
+```
+vmc_trading_bot/
+├── config/
+│   ├── config.yaml              # Your configuration
+│   └── config_v6_production.yaml # Template
+├── src/
+│   ├── core/                    # Bot core logic
+│   ├── exchanges/               # Hyperliquid integration
+│   ├── indicators/              # Technical indicators
+│   └── strategy/                # Trading strategies
+├── logs/                        # Log files
+├── data/                        # Trade database
+├── setup_wizard.py              # Configuration wizard
+├── run_production.py            # Production runner
+├── setup.bat / setup.sh         # Setup scripts
+└── run_bot.bat / run_bot.sh     # Run scripts
+```
 
 ---
 
-## License
+## Updating
 
-MIT License
+```bash
+# Pull latest changes
+git pull origin main
+
+# Reinstall dependencies
+pip install -r requirements.txt --upgrade
+
+# Restart the bot
+```
+
+---
+
+## Risk Disclaimer
+
+**IMPORTANT - READ CAREFULLY:**
+
+- **Past performance does not guarantee future results**
+- Cryptocurrency trading involves significant risk of loss
+- This bot is provided "as-is" without warranties
+- Only trade with funds you can afford to lose
+- Start with testnet to understand the system
+- The developers are not responsible for any trading losses
+- Backtest results may not reflect live trading performance
+
+**Recommendations:**
+- Start with testnet mode
+- Use conservative risk settings (1-2% per trade)
+- Monitor the bot regularly
+- Keep emergency funds available
+- Understand the strategy before going live
+
+---
+
+## Support
+
+- Check the logs for error messages
+- Review this README for common issues
+- Contact support with log files
+
+---
+
+## Version History
+
+### V6 (Current)
+- Per-asset VWAP optimization
+- 15 optimized strategies
+- Fixed VWAP calculation bug
+- Average Sharpe: 2.79
+
+### V5 (Previous)
+- 9 strategies
+- BTC SHORT_ONLY restriction
+- Average Sharpe: 0.31
+
+---
+
+*Last Updated: December 2025*

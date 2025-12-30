@@ -254,8 +254,12 @@ class MoneyFlow:
 
     @staticmethod
     def _sma(series: pd.Series, period: int) -> pd.Series:
-        """Calculate Simple Moving Average."""
-        return series.rolling(window=period, min_periods=1).mean()
+        """Calculate Simple Moving Average.
+
+        Note: Uses min_periods=period to match Pine Script behavior.
+        Pine Script's sma() returns NaN for the first (period-1) bars.
+        """
+        return series.rolling(window=period, min_periods=period).mean()
 
 
 def calculate_money_flow(

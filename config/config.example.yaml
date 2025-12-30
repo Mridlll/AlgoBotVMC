@@ -29,6 +29,69 @@ trading:
   max_positions_per_asset: 1     # Maximum positions per asset
   leverage: 1.0                  # Leverage multiplier (1.0 = no leverage)
 
+  # --------------------------------------------------------------------------
+  # Time Filter (v3) - Based on backtest analysis:
+  #   - Off Hours: +$55,431 total PnL
+  #   - Market Hours: -$11,036 total PnL
+  #   - Weekends: +$18,908 total PnL
+  # --------------------------------------------------------------------------
+  time_filter:
+    enabled: true                # Enable time-based trading filter
+    mode: "skip"                 # Options: skip (no trades), reduce (smaller size)
+
+    # US Market hours to avoid (9:30 AM - 4:00 PM EST = 14:30 - 21:00 UTC)
+    avoid_us_market_hours: true  # Skip/reduce trading during US market hours
+    market_hours_start_utc: 14   # Start hour in UTC (14 = 9:30 AM EST)
+    market_hours_end_utc: 21     # End hour in UTC (21 = 4:00 PM EST)
+
+    # Weekend trading
+    trade_weekends: true         # Allow trading on Saturday/Sunday
+
+    # Position size reduction (when mode = "reduce")
+    reduced_position_multiplier: 0.5  # 0.5 = 50% of normal size
+
+# ----------------------------------------------------------------------------
+# Signal Detection Strategy (v3 Rework)
+# ----------------------------------------------------------------------------
+# Three modes based on V2 analysis:
+#   - simple:   Original VMC (WT cross while oversold/overbought) - More signals
+#   - enhanced: Our 4-step state machine (anchor-trigger-MFI-VWAP) - Selective
+#   - mtf:      Multi-timeframe (HTF bias + LTF entry) - Discord strategy
+# ----------------------------------------------------------------------------
+strategy:
+  signal_mode: "enhanced"           # Options: simple, enhanced, mtf
+
+  # === SIMPLE MODE (Original VMC) ===
+  # Signals when WT1 crosses WT2 while in oversold/overbought zones
+  simple_oversold: -53              # WT2 level for LONG signals (original: -53)
+  simple_overbought: 53             # WT2 level for SHORT signals (original: +53)
+
+  # === ENHANCED MODE (Our 4-step state machine) ===
+  # Requires: anchor wave -> trigger wave -> MFI confirm -> VWAP cross
+  anchor_level: 60                  # WT2 level for anchor detection (60-80 recommended)
+  trigger_timeout_bars: 20          # Max bars to wait for trigger after anchor
+  require_mfi_confirm: true         # Require MFI curve confirmation
+  require_vwap_confirm: true        # Require VWAP zero cross confirmation
+
+  # === MTF MODE (Multi-Timeframe from Discord feedback) ===
+  # HTF (4H+) determines market BIAS, LTF (15m-30m) for entry signals
+  htf_timeframes:                   # Higher timeframes for bias calculation
+    - "4h"
+    - "12h"
+    - "1d"
+  ltf_timeframes:                   # Lower timeframes for entry signals
+    - "15m"
+    - "30m"
+  min_bias_confidence: 0.5          # Minimum HTF bias confidence (0-1)
+  allow_neutral_bias_trades: false  # Allow trades when bias is neutral
+
+  # === DCA SETTINGS (MTF mode only) ===
+  # Second entry when VWAP curves in trade direction
+  enable_dca: false                 # Enable DCA (dollar cost averaging)
+  dca_on_vwap_curve: true           # Trigger DCA when VWAP curves in direction
+  dca_size_multiplier: 0.5          # DCA position size (0.5 = 50% of original)
+  max_dca_entries: 1                # Max DCA entries per trade (1-3)
+
 # ----------------------------------------------------------------------------
 # VMC Indicator Settings
 # ----------------------------------------------------------------------------
