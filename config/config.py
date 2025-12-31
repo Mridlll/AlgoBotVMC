@@ -37,6 +37,132 @@ class OscillatorExitMode(str, Enum):
     FIRST_REVERSAL = "first_reversal" # Exit on any reversal sign (MFI, VWAP, or WT)
 
 
+class TimeFilterType(str, Enum):
+    """Time filter types for V6 strategies."""
+    ALL_HOURS = "all_hours"          # Trade any time
+    NY_HOURS_ONLY = "ny_hours_only"  # Only during NY hours (14:00-21:00 UTC)
+    WEEKENDS_ONLY = "weekends_only"  # Only on weekends (Sat/Sun)
+
+
+class StrategyTimeFilterConfig(BaseModel):
+    """Time filter configuration for V6 strategy instances."""
+    enabled: bool = Field(default=False, description="Enable time filter for this strategy")
+    mode: TimeFilterType = Field(
+        default=TimeFilterType.ALL_HOURS,
+        description="Time filter mode: all_hours, ny_hours_only, weekends_only"
+    )
+
+
+class StrategyMetrics(BaseModel):
+    """Backtest metrics for a strategy (informational only)."""
+    backtest_pnl: Optional[float] = None
+    profit_factor: Optional[float] = None
+    sharpe: Optional[float] = None
+    win_rate: Optional[float] = None
+    trades: Optional[int] = None
+
+    class Config:
+        extra = "allow"  # Allow extra fields
+
+
+class StrategyInstanceConfig(BaseModel):
+    """Configuration for individual V6 strategy instance.
+
+    V6 supports 15 strategies total (5 per asset: BTC, ETH, SOL).
+    Each strategy can have unique settings for:
+    - Timeframe (5m, 15m, 30m, 1h, 4h)
+    - Signal mode (simple at -53/+53, enhanced at -60/+60 or -70/+70)
+    - VWAP confirmation (enabled/disabled)
+    - Time filter (all hours, NY hours only, weekends only)
+    - Direction filter (both, long_only, short_only)
+    """
+    enabled: bool = Field(default=True, description="Enable this strategy")
+    asset: str = Field(..., description="Asset to trade (BTC, ETH, SOL)")
+    timeframe: str = Field(default="5m", description="Timeframe for this strategy")
+
+    # Signal mode settings
+    signal_mode: str = Field(
+        default="simple",
+        description="Signal mode: 'simple' (WT cross) or 'enhanced' (4-step state machine)"
+    )
+    anchor_level: int = Field(
+        default=53,
+        ge=40,
+        le=90,
+        description="Anchor level for signal detection (53, 60, or 70)"
+    )
+
+    # Confirmation settings
+    use_vwap_confirmation: bool = Field(
+        default=False,
+        description="Require VWAP confirmation for entries"
+    )
+    use_mfi_confirmation: bool = Field(
+        default=True,
+        description="Require MFI curve confirmation for entries"
+    )
+
+    # Time filter
+    time_filter: StrategyTimeFilterConfig = Field(
+        default_factory=StrategyTimeFilterConfig,
+        description="Time-based trading filter"
+    )
+
+    # Direction filter
+    direction_filter: str = Field(
+        default="both",
+        description="Direction filter: 'both', 'long_only', 'short_only'"
+    )
+
+    # Exit settings (optional - falls back to global config if not set)
+    exit_strategy: Optional[str] = Field(
+        default=None,
+        description="Exit strategy: 'oscillator', 'fixed_rr', 'trailing'"
+    )
+    oscillator_mode: Optional[str] = Field(
+        default=None,
+        description="Oscillator exit mode: 'full_signal', 'wt_cross', 'first_reversal'"
+    )
+
+    # Backtest metrics (informational)
+    metrics: Optional[StrategyMetrics] = Field(
+        default=None,
+        description="Backtest performance metrics (informational only)"
+    )
+
+    class Config:
+        extra = "allow"  # Allow extra fields for forward compatibility
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_strategy_timeframe(cls, v: str) -> str:
+        valid_timeframes = ["1m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]
+        if v.lower() not in valid_timeframes:
+            raise ValueError(f"Timeframe must be one of: {valid_timeframes}")
+        return v.lower()
+
+    @field_validator("signal_mode")
+    @classmethod
+    def validate_signal_mode(cls, v: str) -> str:
+        valid_modes = ["simple", "enhanced"]
+        if v.lower() not in valid_modes:
+            raise ValueError(f"Signal mode must be one of: {valid_modes}")
+        return v.lower()
+
+    @field_validator("direction_filter")
+    @classmethod
+    def validate_direction_filter(cls, v: str) -> str:
+        valid_filters = ["both", "long_only", "short_only"]
+        if v.lower() not in valid_filters:
+            raise ValueError(f"Direction filter must be one of: {valid_filters}")
+        return v.lower()
+
+    @field_validator("asset")
+    @classmethod
+    def validate_asset(cls, v: str) -> str:
+        return v.upper()
+
+
 class SignalMode(str, Enum):
     """Signal detection modes for VMC strategy.
 
@@ -534,6 +660,12 @@ class Config(BaseModel):
         description="Per-asset configuration overrides (e.g., {'BTC': {...}, 'ETH': {...}})"
     )
 
+    # V6 Multi-strategy configuration
+    strategies: Dict[str, StrategyInstanceConfig] = Field(
+        default_factory=dict,
+        description="V6 strategy instances (e.g., {'btc_5m_simple': {...}, 'eth_15m_enhanced60': {...}})"
+    )
+
     def get_asset_config(self, asset: str) -> AssetConfig:
         """Get configuration for a specific asset, with defaults filled in."""
         return self.assets_config.get(asset.upper(), AssetConfig())
@@ -587,6 +719,39 @@ class Config(BaseModel):
         if asset.upper() not in [a.upper() for a in self.trading.assets]:
             return False
         return self.get_asset_config(asset).enabled
+
+    # === V6 Multi-Strategy Methods ===
+
+    def has_v6_strategies(self) -> bool:
+        """Check if V6 multi-strategy mode is configured."""
+        return len(self.strategies) > 0
+
+    def get_enabled_strategies(self) -> Dict[str, StrategyInstanceConfig]:
+        """Get all enabled V6 strategy instances."""
+        return {
+            name: strat for name, strat in self.strategies.items()
+            if strat.enabled
+        }
+
+    def get_strategies_for_asset(self, asset: str) -> Dict[str, StrategyInstanceConfig]:
+        """Get all enabled strategies for a specific asset."""
+        asset_upper = asset.upper()
+        return {
+            name: strat for name, strat in self.strategies.items()
+            if strat.enabled and strat.asset == asset_upper
+        }
+
+    def get_strategy_timeframes(self) -> List[str]:
+        """Get unique timeframes used across all enabled strategies."""
+        timeframes = set()
+        for strat in self.strategies.values():
+            if strat.enabled:
+                timeframes.add(strat.timeframe)
+        return sorted(list(timeframes))
+
+    def get_strategy(self, name: str) -> Optional[StrategyInstanceConfig]:
+        """Get a specific strategy by name."""
+        return self.strategies.get(name)
 
 
 def load_config(config_path: str | Path) -> Config:

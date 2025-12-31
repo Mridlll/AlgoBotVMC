@@ -16,6 +16,7 @@ from strategy.signals import SignalDetector, Signal
 from strategy.risk import RiskManager, StopLossMethod, TakeProfitMethod
 from strategy.trade_manager import TradeManager, Trade, TradeStatus
 from strategy.multi_timeframe import MultiTimeframeCoordinator, MultiTimeframeSignal
+from strategy.v6_processor import V6SignalProcessor, V6ScanResult
 from persistence.trade_store import TradeStore
 from utils.logger import get_logger, setup_logger
 
@@ -55,6 +56,10 @@ class VMCBot:
         # Multi-timeframe coordinators (per asset)
         self.mtf_coordinators: Dict[str, MultiTimeframeCoordinator] = {}
         self.use_multi_timeframe = config.trading.use_multi_timeframe
+
+        # V6 multi-strategy processor
+        self.v6_processor: Optional[V6SignalProcessor] = None
+        self.use_v6_strategies = config.has_v6_strategies()
 
         # Indicators
         self.heikin_ashi = HeikinAshi()
@@ -154,29 +159,36 @@ class VMCBot:
             # Load and recover any active trades from previous sessions
             await self._recover_trades_from_store()
 
-            # Initialize signal detectors for each asset
-            for asset in self.config.trading.assets:
-                if self.use_multi_timeframe:
-                    # Use MTF coordinator for this asset
-                    tf_config = self.config.trading.timeframes
-                    self.mtf_coordinators[asset] = MultiTimeframeCoordinator(
-                        entry_timeframes=tf_config.entry,
-                        bias_timeframes=tf_config.bias,
-                        bias_weights=tf_config.bias_weights,
-                        require_bias_alignment=tf_config.require_bias_alignment,
-                        min_bias_aligned=tf_config.min_bias_timeframes_aligned,
-                        entry_on_any_timeframe=tf_config.entry_on_any_timeframe,
-                        anchor_level_long=self.config.indicators.wt_oversold_2,
-                        anchor_level_short=self.config.indicators.wt_overbought_2,
-                    )
-                    logger.info(f"MTF coordinator initialized for {asset}: entry={tf_config.entry}, bias={tf_config.bias}")
-                else:
-                    # Use single timeframe detector
-                    self.signal_detectors[asset] = SignalDetector(
-                        anchor_level_long=self.config.indicators.wt_oversold_2,
-                        anchor_level_short=self.config.indicators.wt_overbought_2,
-                        timeframe=self.config.trading.timeframe
-                    )
+            # Initialize V6 multi-strategy processor if strategies configured
+            if self.use_v6_strategies:
+                self.v6_processor = V6SignalProcessor(self.config)
+                enabled_strategies = self.config.get_enabled_strategies()
+                logger.info(f"V6 mode: {len(enabled_strategies)} strategies enabled")
+                logger.info(self.v6_processor.get_strategy_summary())
+            else:
+                # Fallback: Initialize signal detectors for each asset (legacy mode)
+                for asset in self.config.trading.assets:
+                    if self.use_multi_timeframe:
+                        # Use MTF coordinator for this asset
+                        tf_config = self.config.trading.timeframes
+                        self.mtf_coordinators[asset] = MultiTimeframeCoordinator(
+                            entry_timeframes=tf_config.entry,
+                            bias_timeframes=tf_config.bias,
+                            bias_weights=tf_config.bias_weights,
+                            require_bias_alignment=tf_config.require_bias_alignment,
+                            min_bias_aligned=tf_config.min_bias_timeframes_aligned,
+                            entry_on_any_timeframe=tf_config.entry_on_any_timeframe,
+                            anchor_level_long=self.config.indicators.wt_oversold_2,
+                            anchor_level_short=self.config.indicators.wt_overbought_2,
+                        )
+                        logger.info(f"MTF coordinator initialized for {asset}: entry={tf_config.entry}, bias={tf_config.bias}")
+                    else:
+                        # Use single timeframe detector
+                        self.signal_detectors[asset] = SignalDetector(
+                            anchor_level_long=self.config.indicators.wt_oversold_2,
+                            anchor_level_short=self.config.indicators.wt_overbought_2,
+                            timeframe=self.config.trading.timeframe
+                        )
 
             # Set leverage for each asset
             for asset in self.config.trading.assets:
@@ -306,13 +318,31 @@ class VMCBot:
 
         signals = []
 
-        for asset in self.config.trading.assets:
-            try:
-                signal = await self._check_asset(asset)
-                if signal:
-                    signals.append(signal)
-            except Exception as e:
-                logger.error(f"Error checking {asset}: {e}")
+        # V6 multi-strategy mode
+        if self.use_v6_strategies and self.v6_processor:
+            for asset in self.config.trading.assets:
+                try:
+                    v6_result = await self._check_asset_v6(asset)
+                    if v6_result and v6_result.has_signal:
+                        # Use the best signal from V6 result
+                        best = v6_result.best_signal
+                        if best:
+                            signals.append(best.signal)
+                            logger.info(
+                                f"V6 signal: {best.signal.signal_type.value} {asset} "
+                                f"via {best.strategy_name} ({best.timeframe})"
+                            )
+                except Exception as e:
+                    logger.error(f"Error checking {asset} (V6): {e}")
+        else:
+            # Legacy single-strategy mode
+            for asset in self.config.trading.assets:
+                try:
+                    signal = await self._check_asset(asset)
+                    if signal:
+                        signals.append(signal)
+                except Exception as e:
+                    logger.error(f"Error checking {asset}: {e}")
 
         return signals
 
@@ -670,6 +700,78 @@ class VMCBot:
             await self._notify("signal_detected", signal.to_dict())
 
         return signal
+
+    async def _check_asset_v6(self, asset: str) -> Optional[V6ScanResult]:
+        """
+        Check asset using V6 multi-strategy mode.
+
+        Scans all enabled strategies for this asset across different
+        timeframes, applying time filters and VWAP confirmation as
+        configured per strategy.
+
+        Args:
+            asset: Asset symbol
+
+        Returns:
+            V6ScanResult with any detected signals
+        """
+        if not self.v6_processor:
+            return None
+
+        symbol = self.exchange.format_symbol(asset)
+
+        # Get required timeframes for this asset's strategies
+        required_tfs = self.v6_processor.get_required_timeframes(asset)
+        if not required_tfs:
+            return None
+
+        # Fetch candles for all required timeframes
+        try:
+            candles_by_tf_raw = await self.exchange.get_candles_multiple(
+                symbol=symbol,
+                timeframes=required_tfs,
+                limit=200
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch candles for {asset}: {e}")
+            return None
+
+        # Convert candles to DataFrames
+        candles_by_tf: Dict[str, pd.DataFrame] = {}
+        for tf in required_tfs:
+            candles = candles_by_tf_raw.get(tf, [])
+            if candles and len(candles) >= 50:
+                candles_by_tf[tf] = self._candles_to_dataframe(candles)
+            else:
+                logger.debug(f"Not enough {tf} candles for {asset}: {len(candles) if candles else 0}")
+
+        if not candles_by_tf:
+            logger.warning(f"No valid candle data for {asset}")
+            return None
+
+        # Process through V6 processor
+        result = await self.v6_processor.process_asset(asset, candles_by_tf)
+
+        # Log scan results
+        if result.strategies_scanned > 0:
+            logger.debug(
+                f"V6 scan {asset}: {result.strategies_scanned} strategies, "
+                f"{result.strategies_with_signal} signals"
+            )
+
+        # Notify if signal detected
+        if result.has_signal and result.best_signal:
+            best = result.best_signal
+            best.signal.metadata['symbol'] = asset
+            self.state.record_signal(best.signal)
+            await self._notify("signal_detected", {
+                **best.signal.to_dict(),
+                'v6_strategy': best.strategy_name,
+                'v6_timeframe': best.timeframe,
+                'vwap_confirmed': best.vwap_confirmed,
+            })
+
+        return result
 
     async def _check_asset_mtf(self, asset: str) -> Optional[Signal]:
         """
