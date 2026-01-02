@@ -24,6 +24,7 @@ from config.config import (
 from indicators.wavetrend import WaveTrend, WaveTrendResult
 from indicators.money_flow import MoneyFlow, MoneyFlowResult
 from indicators.heikin_ashi import convert_to_heikin_ashi
+from indicators.vwap import VWAPCalculator
 from strategy.signals import SignalType, Signal, AnchorWave, TriggerWave
 from utils.time_filter import should_trade_now
 
@@ -97,6 +98,7 @@ class V6SignalProcessor:
             period=config.indicators.mfi_period,
             multiplier=config.indicators.mfi_multiplier,
         )
+        self.vwap_calc = VWAPCalculator()  # Real VWAP for entry confirmation
 
         # Cache for candle data by timeframe
         self._candle_cache: Dict[str, Dict[str, pd.DataFrame]] = {}
@@ -229,16 +231,25 @@ class V6SignalProcessor:
             return None
 
         # VWAP confirmation (if enabled for this strategy)
+        # Calculate real VWAP from raw OHLCV (not Heikin Ashi)
         vwap_confirmed = True
+        real_vwap = None
         if strat_config.use_vwap_confirmation:
+            try:
+                vwap_result = self.vwap_calc.calculate(df)
+                real_vwap = float(vwap_result.vwap.iloc[-1])
+            except Exception as e:
+                logger.warning(f"{strat_name}: Error calculating VWAP: {e}")
+                real_vwap = None
+
             current_price = float(df['close'].iloc[-1])
             vwap_confirmed = self._check_vwap_confirmation(
                 signal_type=signal_type,
                 current_price=current_price,
-                wt_result=wt_result,
+                real_vwap=real_vwap,
             )
             if not vwap_confirmed:
-                logger.debug(f"{strat_name}: Signal {signal_type} rejected by VWAP")
+                logger.debug(f"{strat_name}: Signal {signal_type} rejected by VWAP (price={current_price:.2f}, vwap={real_vwap:.2f if real_vwap else 'N/A'})")
                 return None
 
         # Avoid duplicate signals on same bar
@@ -416,20 +427,35 @@ class V6SignalProcessor:
         self,
         signal_type: SignalType,
         current_price: float,
-        wt_result: WaveTrendResult,
+        real_vwap: Optional[float],
     ) -> bool:
         """Check VWAP confirmation for entry.
 
-        Long: Price should be above VWAP
-        Short: Price should be below VWAP
+        Long: Price should be above VWAP (bullish positioning)
+        Short: Price should be below VWAP (bearish positioning)
 
-        NOTE: WaveTrendResult.momentum is NOT real VWAP - it's wt1-wt2.
-        Real VWAP confirmation requires VWAPCalculator integration.
-        For now, this returns True (skip check) since we don't have real VWAP.
+        This uses REAL VWAP from VWAPCalculator, not the WT momentum difference.
+
+        Args:
+            signal_type: Type of signal (LONG or SHORT)
+            current_price: Current close price
+            real_vwap: Real VWAP value from VWAPCalculator
+
+        Returns:
+            True if VWAP confirms the signal direction
         """
-        # WaveTrendResult has 'momentum' (wt1-wt2), not real VWAP
-        # TODO: Integrate VWAPCalculator for real VWAP confirmation
-        # Until then, skip VWAP price confirmation
+        # If VWAP couldn't be calculated, skip the check
+        if real_vwap is None:
+            return True
+
+        # Long signals: price should be above VWAP
+        if signal_type == SignalType.LONG:
+            return current_price > real_vwap
+
+        # Short signals: price should be below VWAP
+        if signal_type == SignalType.SHORT:
+            return current_price < real_vwap
+
         return True
 
     def _passes_direction_filter(self, signal_type: SignalType, direction_filter: str) -> bool:

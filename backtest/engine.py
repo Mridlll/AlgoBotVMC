@@ -1655,9 +1655,15 @@ class BacktestEngine:
         # Drawdown
         max_dd, max_dd_pct = self._calculate_max_drawdown(equity_curve)
 
-        # Sharpe ratio (simplified)
-        returns = pd.Series(equity_curve).pct_change().dropna()
-        sharpe = (returns.mean() / returns.std() * np.sqrt(252)) if len(returns) > 1 and returns.std() > 0 else 0
+        # Sharpe ratio (per-trade returns, matches golden evaluation)
+        # Using per-trade PnL % gives more accurate Sharpe for trading systems
+        # vs equity curve pct_change which includes flat periods
+        if len(trades) > 1:
+            trade_returns = [t.pnl_percent for t in trades]
+            returns_std = np.std(trade_returns)
+            sharpe = (np.mean(trade_returns) / returns_std * np.sqrt(252)) if returns_std > 0 else 0
+        else:
+            sharpe = 0
 
         return BacktestResult(
             initial_balance=self.initial_balance,
