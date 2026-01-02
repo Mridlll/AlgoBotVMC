@@ -347,7 +347,20 @@ class BacktestGUI:
             self.root.after(0, lambda: self.log("No results to display"))
 
         self.root.after(0, lambda: self.log("=" * 60))
-        self.root.after(0, lambda: self.log("Backtest complete!"))
+
+        # Export trades CSV and save log
+        if results:
+            csv_file = self._export_trades_csv(results)
+            if csv_file:
+                self.root.after(0, lambda f=csv_file: self.log(f"Trades exported to: {f}"))
+
+        # Save output log (must be done on main thread)
+        def save_log():
+            log_file = self._save_output_log()
+            self.log(f"Log saved to: {log_file}")
+            self.log("Backtest complete!")
+
+        self.root.after(100, save_log)
 
     async def _load_data(
         self,
@@ -454,13 +467,61 @@ class BacktestGUI:
 
             return {
                 'strategy': strategy_name,
+                'asset': config.asset,
+                'timeframe': config.timeframe,
                 'trades': result.total_trades,
                 'win_rate': result.win_rate,
                 'pnl': result.total_pnl,
-                'sharpe': result.sharpe_ratio
+                'sharpe': result.sharpe_ratio,
+                'trade_list': result.trades  # For CSV export
             }
         except Exception:
             return None
+
+    def _export_trades_csv(self, results: list):
+        """Export all trades to CSV file."""
+        output_dir = SCRIPT_DIR / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        all_trades = []
+        for r in results:
+            for trade in r.get('trade_list', []):
+                trade_dict = trade.to_dict() if hasattr(trade, 'to_dict') else {
+                    'entry_time': trade.entry_time,
+                    'exit_time': trade.exit_time,
+                    'signal_type': trade.signal_type.value if hasattr(trade.signal_type, 'value') else str(trade.signal_type),
+                    'entry_price': trade.entry_price,
+                    'exit_price': trade.exit_price,
+                    'pnl': trade.pnl,
+                    'pnl_percent': trade.pnl_percent,
+                    'exit_reason': trade.exit_reason,
+                }
+                trade_dict['strategy'] = r['strategy']
+                trade_dict['asset'] = r['asset']
+                trade_dict['timeframe'] = r['timeframe']
+                all_trades.append(trade_dict)
+
+        if all_trades:
+            df = pd.DataFrame(all_trades)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = output_dir / f"backtest_trades_{timestamp}.csv"
+            df.to_csv(output_file, index=False)
+            return str(output_file)
+        return None
+
+    def _save_output_log(self):
+        """Save output text to log file."""
+        output_dir = SCRIPT_DIR / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = output_dir / f"backtest_log_{timestamp}.txt"
+
+        content = self.output_text.get(1.0, tk.END)
+        with open(log_file, 'w') as f:
+            f.write(content)
+
+        return str(log_file)
 
 
 def main():
