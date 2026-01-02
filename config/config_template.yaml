@@ -1,0 +1,108 @@
+# =============================================================================
+# VMC Trading Bot V6 - CUSTOM CONFIG TEMPLATE
+# =============================================================================
+# Copy this file, rename it (e.g., my_config.yaml), and customize your strategies.
+# Then select it in the GUI dropdown or use Browse to load it.
+#
+# STRATEGY PARAMETERS:
+# --------------------
+# asset:           BTC, ETH, SOL
+# timeframe:       5m, 15m, 30m, 1h, 4h
+# signal_mode:     "simple" or "enhanced"
+# anchor_level:    53, 60, 70 (higher = fewer but stronger signals)
+# direction_filter: "both", "long_only", "short_only"
+# time_filter:     "all_hours", "ny_hours_only", "weekends_only"
+#
+# WHAT WORKS BEST (from backtests):
+# ---------------------------------
+# - SOL + 5m + simple + ny_hours = High volume, good profits
+# - ETH + 30m + enhanced70 + ny_hours = Best single strategy
+# - 4h timeframes = Fewer trades but consistent
+# - NY hours (14:00-21:00 UTC) = Best volatility
+# - Weekends = Lower volume but cleaner signals
+# =============================================================================
+
+exchange:
+  name: "hyperliquid"
+  testnet: false
+
+trading:
+  leverage: 10
+  risk_percent: 3.0
+  max_positions: 3
+  max_positions_per_asset: 1
+
+# =============================================================================
+# STRATEGIES - Enable/disable and customize as needed
+# =============================================================================
+strategies:
+
+  # ---------------------------------------------------------------------------
+  # EXAMPLE 1: Conservative BTC strategy (4h, enhanced, all hours)
+  # ---------------------------------------------------------------------------
+  btc_4h_conservative:
+    enabled: true
+    asset: "BTC"
+    timeframe: "4h"
+    signal_mode: "enhanced"
+    anchor_level: 70          # High threshold = fewer signals
+    direction_filter: "both"  # Trade both long and short
+    time_filter:
+      enabled: false          # Trade all hours
+
+  # ---------------------------------------------------------------------------
+  # EXAMPLE 2: Aggressive SOL strategy (5m, simple, NY hours only)
+  # ---------------------------------------------------------------------------
+  sol_5m_aggressive:
+    enabled: true
+    asset: "SOL"
+    timeframe: "5m"
+    signal_mode: "simple"
+    anchor_level: 53          # Lower threshold = more signals
+    direction_filter: "both"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"   # Only trade NY session
+
+  # ---------------------------------------------------------------------------
+  # EXAMPLE 3: ETH weekend scalper (15m, enhanced, weekends)
+  # ---------------------------------------------------------------------------
+  eth_weekend_scalper:
+    enabled: true
+    asset: "ETH"
+    timeframe: "15m"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "long_only"  # Only long positions
+    time_filter:
+      enabled: true
+      mode: "weekends_only"
+
+  # ---------------------------------------------------------------------------
+  # EXAMPLE 4: Disabled strategy (set enabled: false to skip)
+  # ---------------------------------------------------------------------------
+  btc_experimental:
+    enabled: false            # Won't be used in backtest/live
+    asset: "BTC"
+    timeframe: "30m"
+    signal_mode: "simple"
+    anchor_level: 53
+    direction_filter: "both"
+    time_filter:
+      enabled: false
+
+# =============================================================================
+# ADD YOUR OWN STRATEGIES BELOW
+# Copy any example above and modify the parameters
+# =============================================================================
+
+  # my_custom_strategy:
+  #   enabled: true
+  #   asset: "ETH"
+  #   timeframe: "1h"
+  #   signal_mode: "enhanced"
+  #   anchor_level: 65
+  #   direction_filter: "both"
+  #   time_filter:
+  #     enabled: true
+  #     mode: "ny_hours_only"
