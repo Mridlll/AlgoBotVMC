@@ -435,6 +435,8 @@ class HyperliquidExchange(BaseExchange):
     ) -> None:
         """Place a stop loss order."""
         try:
+            # Round price to avoid float_to_wire rounding errors
+            stop_price = self._round_price(stop_price)
             hl_order_type = {
                 "trigger": {
                     "isMarket": True,
@@ -462,6 +464,8 @@ class HyperliquidExchange(BaseExchange):
     ) -> None:
         """Place a take profit order."""
         try:
+            # Round price to avoid float_to_wire rounding errors
+            tp_price = self._round_price(tp_price)
             hl_order_type = {
                 "trigger": {
                     "isMarket": True,
