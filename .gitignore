@@ -57,8 +57,14 @@ config/*.yaml
 # ----------------------------------------------------------------------------
 # Data & Cache
 # ----------------------------------------------------------------------------
-data/
+# Ignore data folder contents except binance cache
+data/*
+!data/binance_cache/
+!data/binance_cache_1year/
+# Ignore CSVs except in binance cache folders
 *.csv
+!data/binance_cache/*.csv
+!data/binance_cache_1year/*.csv
 *.json
 !package.json
 
