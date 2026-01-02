@@ -119,6 +119,30 @@ class TradeManager:
         self._trade_history: List[Trade] = []
         self._trade_counter = 0
 
+        # CRITICAL: Lock for thread-safe access to _active_trades
+        # Prevents race conditions when multiple async operations modify trades
+        self._trades_lock = asyncio.Lock()
+
+    @property
+    def active_trades(self) -> Dict[str, 'Trade']:
+        """Thread-safe access to active trades (read-only snapshot)."""
+        return dict(self._active_trades)
+
+    async def add_trade(self, trade: 'Trade') -> None:
+        """Thread-safe add trade."""
+        async with self._trades_lock:
+            self._active_trades[trade.trade_id] = trade
+
+    async def remove_trade(self, trade_id: str) -> Optional['Trade']:
+        """Thread-safe remove trade."""
+        async with self._trades_lock:
+            return self._active_trades.pop(trade_id, None)
+
+    async def get_trade(self, trade_id: str) -> Optional['Trade']:
+        """Thread-safe get trade."""
+        async with self._trades_lock:
+            return self._active_trades.get(trade_id)
+
     def _generate_trade_id(self) -> str:
         """Generate unique trade ID."""
         self._trade_counter += 1
@@ -239,6 +263,11 @@ class TradeManager:
             # Get account balance
             balance = await self.exchange.get_balance()
 
+            # CRITICAL: Validate balance before proceeding
+            if balance is None or balance.available_balance <= 0:
+                logger.error(f"Invalid balance for {symbol}: {balance}")
+                return None
+
             # Calculate risk parameters
             is_long = signal.signal_type == SignalType.LONG
             risk_params = self.risk_manager.calculate_full_risk_params(
@@ -250,6 +279,18 @@ class TradeManager:
                 risk_percent=risk_percent,
                 risk_reward=risk_reward
             )
+
+            # CRITICAL: Validate position size before placing order
+            if risk_params.position_size <= 0:
+                logger.error(f"Invalid position size for {symbol}: {risk_params.position_size}")
+                return None
+
+            # Check minimum notional value ($10 on Hyperliquid)
+            notional = risk_params.position_size * signal.entry_price
+            MIN_NOTIONAL = 11.0
+            if notional < MIN_NOTIONAL:
+                logger.warning(f"Position notional ${notional:.2f} below minimum ${MIN_NOTIONAL} for {symbol}")
+                return None
 
             # Create trade object with metadata including timeframe for exit signal checking
             trade = Trade(

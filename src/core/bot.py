@@ -749,17 +749,36 @@ class VMCBot:
 
                     # Create recovery trade to track this position
                     is_long = pos.size > 0
+                    entry = pos.entry_price
+
+                    # CRITICAL FIX: Set reasonable default SL/TP for recovered trades
+                    # Uses 5% SL and 10% TP as safety defaults
+                    # These can be adjusted manually but prevent unprotected positions
+                    DEFAULT_SL_PCT = 0.05  # 5% stop loss
+                    DEFAULT_TP_PCT = 0.10  # 10% take profit
+
+                    if is_long:
+                        default_sl = entry * (1 - DEFAULT_SL_PCT)
+                        default_tp = entry * (1 + DEFAULT_TP_PCT)
+                    else:
+                        default_sl = entry * (1 + DEFAULT_SL_PCT)
+                        default_tp = entry * (1 - DEFAULT_TP_PCT)
+
                     recovery_trade = Trade(
                         trade_id=f"recovery_{symbol}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
                         symbol=symbol,
                         signal_type=SignalType.LONG if is_long else SignalType.SHORT,
-                        entry_price=pos.entry_price,
+                        entry_price=entry,
                         size=abs(pos.size),
-                        stop_loss=0,  # Unknown - will need manual management
-                        take_profit=0,  # Unknown
+                        stop_loss=default_sl,  # 5% default SL for safety
+                        take_profit=default_tp,  # 10% default TP
                         status=TradeStatus.OPEN,
                         opened_at=datetime.utcnow(),
-                        metadata={'recovered': True, 'original_position': pos.to_dict()}
+                        metadata={
+                            'recovered': True,
+                            'skip_sl_tp_orders': True,  # Don't place SL/TP orders (already on exchange or none)
+                            'original_position': pos.to_dict()
+                        }
                     )
 
                     self.trade_manager._active_trades[recovery_trade.trade_id] = recovery_trade

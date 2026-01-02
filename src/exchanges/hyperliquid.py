@@ -71,6 +71,10 @@ class HyperliquidExchange(BaseExchange):
         self._connected = False
         self._signing_address = None  # Will be set from private key
 
+        # Cache for szDecimals per asset (prevents repeated API calls)
+        # CRITICAL: Different assets have different precision requirements
+        self._sz_decimals_cache: Dict[str, int] = {}
+
     @property
     def name(self) -> str:
         return "hyperliquid"
@@ -533,15 +537,21 @@ class HyperliquidExchange(BaseExchange):
 
             for order_status in user_state.get('openOrders', []):
                 if str(order_status.get('oid')) == order_id:
+                    # CRITICAL FIX: filled_size = origSz - sz (original minus remaining)
+                    # Previous: sz - origSz was BACKWARDS (gave negative values!)
+                    orig_size = float(order_status.get('origSz', 0))
+                    remaining_size = float(order_status.get('sz', 0))
+                    filled = max(0, orig_size - remaining_size)  # origSz - sz
+
                     return Order(
                         order_id=order_id,
                         symbol=order_status.get('coin', symbol),
                         side=OrderSide.BUY if order_status.get('side') == 'B' else OrderSide.SELL,
                         order_type=OrderType.LIMIT,
-                        size=float(order_status.get('sz', 0)),
+                        size=orig_size,
                         price=float(order_status.get('limitPx', 0)),
-                        status=OrderStatus.OPEN,
-                        filled_size=float(order_status.get('sz', 0)) - float(order_status.get('origSz', 0)),
+                        status=OrderStatus.OPEN if remaining_size > 0 else OrderStatus.FILLED,
+                        filled_size=filled,
                     )
 
             return None
@@ -662,17 +672,31 @@ class HyperliquidExchange(BaseExchange):
         - BTC: 5 decimals (0.00001)
         - ETH: 4 decimals (0.0001)
         - SOL: 2 decimals (0.01)
+
+        Uses caching to avoid repeated API calls (CRITICAL for order placement).
         """
+        # Check cache first (CRITICAL: prevents repeated metadata fetches)
+        if symbol in self._sz_decimals_cache:
+            return self._sz_decimals_cache[symbol]
+
         if not self._info:
             return 5  # Default fallback
 
         try:
             meta = self._info.meta()
+            # Cache ALL assets at once to minimize future calls
             for asset_info in meta.get('universe', []):
-                if asset_info.get('name') == symbol:
-                    sz_decimals = asset_info.get('szDecimals', 5)
-                    logger.debug(f"{symbol} szDecimals: {sz_decimals}")
-                    return sz_decimals
+                asset_name = asset_info.get('name')
+                decimals = asset_info.get('szDecimals', 5)
+                if asset_name:
+                    self._sz_decimals_cache[asset_name] = decimals
+
+            # Log what we found
+            if symbol in self._sz_decimals_cache:
+                logger.info(f"Cached szDecimals: {symbol}={self._sz_decimals_cache[symbol]}")
+                return self._sz_decimals_cache[symbol]
+
+            logger.warning(f"{symbol} not found in metadata, using default 5")
             return 5  # Default if not found
         except Exception as e:
             logger.warning(f"Failed to get szDecimals for {symbol}: {e}")

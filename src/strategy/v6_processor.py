@@ -274,14 +274,27 @@ class V6SignalProcessor:
         current_price = float(df['close'].iloc[-1])
         current_ts = df.index[-1] if hasattr(df.index[-1], 'timestamp') else current_time
 
+        # CRITICAL: Validate indicator values are not NaN before processing
+        # NaN values occur during indicator warmup period (first 60 bars for MFI)
+        import math
+        wt1_check = float(wt_result.wt1.iloc[-1])
+        wt2_check = float(wt_result.wt2.iloc[-1])
+        if math.isnan(wt1_check) or math.isnan(wt2_check):
+            logger.debug(f"{strat_name}: Skipping - WaveTrend values are NaN (indicator warmup)")
+            return None
+
         # Detect signal using full state machine (BACKTEST-ALIGNED)
         # Different detectors have different interfaces
         signal = None
         if isinstance(detector, SimpleSignalDetector):
             # SimpleSignalDetector: single-bar cross detection
-            wt1_val = float(wt_result.wt1.iloc[-1])
-            wt2_val = float(wt_result.wt2.iloc[-1])
+            wt1_val = wt1_check
+            wt2_val = wt2_check
             mfi_val = float(mf_result.mfi.iloc[-1]) if hasattr(mf_result, 'mfi') else 0.0
+
+            # Also check MFI for NaN
+            if math.isnan(mfi_val):
+                mfi_val = 0.0  # Use neutral value if MFI not ready
 
             signal = detector.process_bar(
                 timestamp=current_ts,
