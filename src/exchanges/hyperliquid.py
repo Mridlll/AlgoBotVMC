@@ -589,7 +589,7 @@ class HyperliquidExchange(BaseExchange):
         try:
             result = self._exchange.update_leverage(
                 leverage=int(leverage),
-                coin=symbol,
+                name=symbol,  # SDK uses 'name' not 'coin'
                 is_cross=True
             )
             return result.get('status') == 'ok'
