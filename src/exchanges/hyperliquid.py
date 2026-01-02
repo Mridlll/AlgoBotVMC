@@ -386,6 +386,10 @@ class HyperliquidExchange(BaseExchange):
             if result.get('status') == 'ok':
                 order_result = result.get('response', {}).get('data', {}).get('statuses', [{}])[0]
 
+                # Check for errors in the order result
+                if 'error' in order_result:
+                    raise Exception(f"Order rejected: {order_result['error']}")
+
                 # Extract order ID - can be in 'resting' (limit) or 'filled' (market)
                 order_id = ""
                 if 'resting' in order_result:
