@@ -215,6 +215,18 @@ class ProductionRunner:
             # Load config
             self.config = load_config(self.config_path)
 
+            # MAINNET WARNING
+            if not self.config.exchange.testnet:
+                logger.warning("=" * 60)
+                logger.warning(">>> MAINNET MODE - REAL MONEY AT RISK! <<<")
+                logger.warning("=" * 60)
+                logger.warning("You are running on Hyperliquid MAINNET.")
+                logger.warning("All trades will use REAL funds.")
+                logger.warning("Make sure you understand the risks!")
+                logger.warning("=" * 60)
+            else:
+                logger.info("Running on TESTNET (paper trading)")
+
             # Initialize Discord notifier
             if self.config.discord.enabled and self.config.discord.webhook_url:
                 self.notifier = DiscordNotifier(

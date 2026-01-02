@@ -1,0 +1,305 @@
+# VMC Trading Bot - MAINNET Configuration V6
+# ============================================================
+# WARNING: THIS IS FOR REAL MONEY TRADING!
+# ============================================================
+#
+# Before using this config:
+# 1. Test thoroughly on TESTNET first
+# 2. Understand all risks involved
+# 3. Only invest what you can afford to lose
+# 4. Start with small position sizes
+#
+# 15 STRATEGIES: Top 5 Per Asset (BTC, ETH, SOL)
+# Expected Performance (backtest): ~$534K/year on $10K @ 3% risk
+# Average Sharpe: 2.79
+
+# ==============================================================================
+# EXCHANGE CONFIGURATION - MAINNET
+# ==============================================================================
+# SETUP INSTRUCTIONS:
+#   1. Go to https://app.hyperliquid.xyz/API
+#   2. Create a new API wallet
+#   3. Authorize the API wallet
+#   4. Copy credentials below
+#   5. NEVER share your private key!
+# ==============================================================================
+exchange:
+  name: "hyperliquid"
+  api_key: ""
+  api_secret: "YOUR_API_WALLET_PRIVATE_KEY_HERE"      # 0x... format
+  wallet_address: "YOUR_API_WALLET_ADDRESS_HERE"      # 0x... format
+  account_address: "YOUR_MAIN_WALLET_ADDRESS_HERE"    # 0x... format
+  testnet: false                                       # FALSE = MAINNET!
+
+# ==============================================================================
+# TRADING PARAMETERS
+# ==============================================================================
+trading:
+  assets:
+    - "BTC"
+    - "ETH"
+    - "SOL"
+
+  # Risk Management - BE CONSERVATIVE ON MAINNET!
+  risk_percent: 1.0              # Start with 1% per trade on mainnet
+  max_positions: 3               # 1 per asset
+  max_positions_per_asset: 1
+  leverage: 3.0                  # 3x leverage
+
+# ==============================================================================
+# PER-ASSET VWAP SETTINGS (V6 Optimized)
+# ==============================================================================
+asset_settings:
+  BTC:
+    vwap_entry_confirmation: true   # BTC benefits from VWAP filter
+    direction_filter: "both"
+  ETH:
+    vwap_entry_confirmation: false  # ETH: More trades = more profit
+    direction_filter: "both"
+  SOL:
+    vwap_entry_confirmation: false  # SOL: More trades = more profit
+    direction_filter: "both"
+
+# ==============================================================================
+# 15 STRATEGY CONFIGURATIONS
+# ==============================================================================
+strategies:
+  # === BTC STRATEGIES (VWAP ENABLED) ===
+  btc_5m_enhanced60_ny:
+    enabled: true
+    asset: "BTC"
+    timeframe: "5m"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "both"
+    use_vwap_confirmation: true
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  btc_5m_simple_ny:
+    enabled: true
+    asset: "BTC"
+    timeframe: "5m"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: true
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  btc_4h_enhanced60_all:
+    enabled: true
+    asset: "BTC"
+    timeframe: "4h"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "both"
+    use_vwap_confirmation: true
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: false
+      mode: "all_hours"
+
+  btc_30m_enhanced70_ny:
+    enabled: true
+    asset: "BTC"
+    timeframe: "30m"
+    signal_mode: "enhanced"
+    anchor_level: 70
+    direction_filter: "both"
+    use_vwap_confirmation: true
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  btc_4h_simple_all:
+    enabled: true
+    asset: "BTC"
+    timeframe: "4h"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: true
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: false
+      mode: "all_hours"
+
+  # === ETH STRATEGIES (VWAP DISABLED) ===
+  eth_5m_simple_ny:
+    enabled: true
+    asset: "ETH"
+    timeframe: "5m"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  eth_30m_simple_weekends:
+    enabled: true
+    asset: "ETH"
+    timeframe: "30m"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "weekends_only"
+
+  eth_15m_enhanced70_weekends:
+    enabled: true
+    asset: "ETH"
+    timeframe: "15m"
+    signal_mode: "enhanced"
+    anchor_level: 70
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "weekends_only"
+
+  eth_5m_enhanced60_ny:
+    enabled: true
+    asset: "ETH"
+    timeframe: "5m"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  eth_30m_enhanced70_ny:
+    enabled: true
+    asset: "ETH"
+    timeframe: "30m"
+    signal_mode: "enhanced"
+    anchor_level: 70
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  # === SOL STRATEGIES (VWAP DISABLED) ===
+  sol_5m_simple_ny:
+    enabled: true
+    asset: "SOL"
+    timeframe: "5m"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  sol_5m_enhanced60_ny:
+    enabled: true
+    asset: "SOL"
+    timeframe: "5m"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  sol_1h_enhanced70_weekends:
+    enabled: true
+    asset: "SOL"
+    timeframe: "1h"
+    signal_mode: "enhanced"
+    anchor_level: 70
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "weekends_only"
+
+  sol_15m_simple_ny:
+    enabled: true
+    asset: "SOL"
+    timeframe: "15m"
+    signal_mode: "simple"
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+  sol_15m_enhanced60_ny:
+    enabled: true
+    asset: "SOL"
+    timeframe: "15m"
+    signal_mode: "enhanced"
+    anchor_level: 60
+    direction_filter: "both"
+    use_vwap_confirmation: false
+    exit_strategy: "oscillator"
+    oscillator_mode: "full_signal"
+    time_filter:
+      enabled: true
+      mode: "ny_hours_only"
+
+# ==============================================================================
+# INDICATOR SETTINGS
+# ==============================================================================
+indicators:
+  wt_channel_len: 9
+  wt_average_len: 12
+  wt_ma_len: 3
+  wt_overbought_1: 53
+  wt_oversold_1: -53
+  wt_overbought_2: 60
+  wt_oversold_2: -60
+  mfi_period: 60
+  mfi_multiplier: 150.0
+
+# ==============================================================================
+# STOP LOSS
+# ==============================================================================
+stop_loss:
+  method: "atr"
+  atr_multiplier: 2.0
+  atr_period: 14
+
+# ==============================================================================
+# DISCORD NOTIFICATIONS (Recommended for mainnet!)
+# ==============================================================================
+discord:
+  enabled: true
+  webhook_url: "YOUR_DISCORD_WEBHOOK_URL_HERE"
+  notify_on_signal: true
+  notify_on_trade_open: true
+  notify_on_trade_close: true
+  notify_on_error: true

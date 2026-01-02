@@ -15,13 +15,27 @@
 # ==============================================================================
 # EXCHANGE CONFIGURATION
 # ==============================================================================
+# NETWORK SELECTION:
+#   testnet: true  = Hyperliquid Testnet (paper trading, no real money)
+#   testnet: false = Hyperliquid Mainnet (REAL MONEY - USE WITH CAUTION!)
+#
+# API WALLET SETUP:
+#   1. Go to https://app.hyperliquid.xyz/API (mainnet) or
+#      https://app.hyperliquid-testnet.xyz/API (testnet)
+#   2. Generate an API wallet and authorize it
+#   3. Copy the private key to api_secret
+#   4. Copy the API wallet address to wallet_address
+#   5. Your main wallet address goes in account_address
+#
+# WARNING: API wallets are network-specific! Create separate ones for testnet/mainnet.
+# ==============================================================================
 exchange:
   name: "hyperliquid"
   api_key: ""                    # Not used for Hyperliquid
-  api_secret: ""                 # Your API wallet private key
-  wallet_address: ""             # Your API wallet address
-  account_address: ""            # Your main wallet address (where funds are)
-  testnet: true                  # START WITH TESTNET FIRST!
+  api_secret: "0xb7fd1a38a0eafc6fb2fb47390c5596fd5aaeab1496873d86f6a9e11d5d409622"
+  wallet_address: "0xEfA20161a658baB02ddb0884e81fCf4702544161"
+  account_address: "0x8A41f91F21260137Ef17aafde0ac2A13e5036f91"
+  testnet: true                  # Set to false for MAINNET (real money!)
 
 # ==============================================================================
 # GLOBAL TRADING PARAMETERS
@@ -36,7 +50,7 @@ trading:
   risk_percent: 2.0              # 2% per trade (conservative for production)
   max_positions: 3               # 1 per asset
   max_positions_per_asset: 1     # IMPORTANT: Only 1 position per asset at a time
-  leverage: 2.0                  # 2x leverage (conservative)
+  leverage: 3.0                  # 3x leverage
 
   # V6 Feature Flags
   use_vwap_confirmation: true    # Master switch (per-asset override below)
