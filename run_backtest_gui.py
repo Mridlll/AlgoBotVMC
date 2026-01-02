@@ -47,7 +47,11 @@ class BacktestGUI:
         self.data_source = tk.StringVar(value="cache")
         self.asset = tk.StringVar(value="ALL")
         self.days = tk.StringVar(value="365")
+        self.config_file = tk.StringVar(value="config_v6_production.yaml")
         self.running = False
+
+        # Find available config files
+        self.config_files = self._find_config_files()
 
         self.create_widgets()
 
@@ -107,6 +111,26 @@ class BacktestGUI:
         )
         asset_combo.pack(side=tk.LEFT, padx=10)
 
+        # Config File Selection
+        config_frame = ttk.Frame(settings_frame)
+        config_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(config_frame, text="Config:", width=15).pack(side=tk.LEFT)
+
+        config_combo = ttk.Combobox(
+            config_frame,
+            textvariable=self.config_file,
+            values=self.config_files,
+            width=30
+        )
+        config_combo.pack(side=tk.LEFT, padx=10)
+
+        ttk.Button(
+            config_frame,
+            text="Browse...",
+            command=self._browse_config
+        ).pack(side=tk.LEFT)
+
         # Days
         days_frame = ttk.Frame(settings_frame)
         days_frame.pack(fill=tk.X, pady=5)
@@ -155,6 +179,31 @@ class BacktestGUI:
             font=('Consolas', 9)
         )
         self.output_text.pack(fill=tk.BOTH, expand=True)
+
+    def _find_config_files(self):
+        """Find available config files in config directory."""
+        config_dir = SCRIPT_DIR / "config"
+        configs = []
+        if config_dir.exists():
+            for f in config_dir.glob("*.yaml"):
+                if not f.name.endswith('.example.yaml'):
+                    configs.append(f.name)
+        # Put production config first
+        if "config_v6_production.yaml" in configs:
+            configs.remove("config_v6_production.yaml")
+            configs.insert(0, "config_v6_production.yaml")
+        return configs if configs else ["config_v6_production.yaml"]
+
+    def _browse_config(self):
+        """Open file dialog to select custom config file."""
+        from tkinter import filedialog
+        filename = filedialog.askopenfilename(
+            initialdir=SCRIPT_DIR / "config",
+            title="Select Config File",
+            filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")]
+        )
+        if filename:
+            self.config_file.set(filename)
 
     def update_cache_status(self):
         """Check and display cache status."""
@@ -235,13 +284,19 @@ class BacktestGUI:
         self.root.after(0, lambda: self.log(f"Period: {days} days"))
         self.root.after(0, lambda: self.log("-" * 60))
 
-        # Load config
-        config_path = SCRIPT_DIR / "config" / "config_v6_production.yaml"
+        # Load config (use selected config file)
+        config_name = self.config_file.get()
+        if os.path.isabs(config_name):
+            config_path = Path(config_name)
+        else:
+            config_path = SCRIPT_DIR / "config" / config_name
+
         if not config_path.exists():
             self.root.after(0, lambda: self.log(f"Error: Config file not found!"))
             self.root.after(0, lambda: self.log(f"Looking for: {config_path}"))
-            self.root.after(0, lambda: self.log(f"Current dir: {os.getcwd()}"))
             return
+
+        self.root.after(0, lambda: self.log(f"Config: {config_path.name}"))
 
         config = load_config(str(config_path))
         strategies = config.get_enabled_strategies()
