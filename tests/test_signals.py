@@ -115,7 +115,7 @@ class TestSignalDetector:
             wt_subset = type(wt_result)(
                 wt1=wt_result.wt1.iloc[:i+1],
                 wt2=wt_result.wt2.iloc[:i+1],
-                vwap=wt_result.vwap.iloc[:i+1],
+                momentum=wt_result.momentum.iloc[:i+1],
                 cross=wt_result.cross.iloc[:i+1],
                 cross_up=wt_result.cross_up.iloc[:i+1],
                 cross_down=wt_result.cross_down.iloc[:i+1],
@@ -195,7 +195,7 @@ class TestSignalStates:
         assert SignalState.ANCHOR_DETECTED.value == 2
         assert SignalState.TRIGGER_DETECTED.value == 3
         assert SignalState.AWAITING_MFI.value == 4
-        assert SignalState.AWAITING_VWAP.value == 5
+        assert SignalState.AWAITING_MOMENTUM_CROSS.value == 5
         assert SignalState.SIGNAL_READY.value == 6
 
     def test_signal_type_enum(self):

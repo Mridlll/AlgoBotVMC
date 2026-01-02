@@ -221,7 +221,7 @@ class MTFSynchronizer:
                 "wt2": htf_ind.wt_result.wt2.iloc[bar_idx],
                 "mfi": htf_ind.mf_result.mfi.iloc[bar_idx],
                 "mfi_prev": htf_ind.mf_result.mfi.iloc[bar_idx - 1] if bar_idx > 0 else 0,
-                "vwap": htf_ind.wt_result.vwap.iloc[bar_idx],
+                "momentum": htf_ind.wt_result.momentum.iloc[bar_idx],
                 "timestamp": htf_ind.df.index[bar_idx],
             }
         except Exception:
@@ -258,7 +258,7 @@ class MTFSynchronizer:
                 wt2=indicators["wt2"],
                 mfi=indicators["mfi"],
                 mfi_prev=indicators["mfi_prev"],
-                vwap=indicators["vwap"]
+                momentum=indicators["momentum"]
             )
             htf_analyses.append(analysis)
 

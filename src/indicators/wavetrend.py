@@ -11,7 +11,7 @@ class WaveTrendResult:
     """WaveTrend calculation results."""
     wt1: pd.Series  # Fast wave (EMA of CI)
     wt2: pd.Series  # Slow wave (SMA of WT1)
-    vwap: pd.Series  # WT1 - WT2 (momentum)
+    momentum: pd.Series  # WT1 - WT2 (NOT real VWAP - use VWAPCalculator for that)
 
     # Crosses
     cross: pd.Series  # Any cross
@@ -104,8 +104,8 @@ class WaveTrend:
         # WT2 = SMA(WT1, MA Length)
         wt2 = self._sma(wt1, self.ma_len)
 
-        # VWAP = WT1 - WT2
-        vwap = wt1 - wt2
+        # Momentum = WT1 - WT2 (Note: This is NOT real VWAP)
+        momentum = wt1 - wt2
 
         # Crosses
         cross_up = (wt1 > wt2) & (wt1.shift(1) <= wt2.shift(1))
@@ -119,7 +119,7 @@ class WaveTrend:
         return WaveTrendResult(
             wt1=wt1,
             wt2=wt2,
-            vwap=vwap,
+            momentum=momentum,
             cross=cross,
             cross_up=cross_up,
             cross_down=cross_down,
@@ -138,7 +138,7 @@ class WaveTrend:
             prices: Array of hlc3 prices (most recent last)
 
         Returns:
-            Tuple of (wt1, wt2, vwap) for the latest bar
+            Tuple of (wt1, wt2, momentum) for the latest bar
         """
         df = pd.DataFrame({'hlc3': prices})
         df['high'] = prices
@@ -150,7 +150,7 @@ class WaveTrend:
         return (
             result.wt1.iloc[-1],
             result.wt2.iloc[-1],
-            result.vwap.iloc[-1]
+            result.momentum.iloc[-1]
         )
 
     def is_anchor_long(self, wt2: float) -> bool:
@@ -177,31 +177,31 @@ class WaveTrend:
         """
         return wt2 >= self.overbought_2
 
-    def vwap_crossed_up(self, vwap_current: float, vwap_prev: float) -> bool:
+    def momentum_crossed_up(self, momentum_current: float, momentum_prev: float) -> bool:
         """
-        Check if VWAP crossed above 0.
+        Check if momentum (WT1-WT2) crossed above 0.
 
         Args:
-            vwap_current: Current VWAP value
-            vwap_prev: Previous VWAP value
+            momentum_current: Current momentum value
+            momentum_prev: Previous momentum value
 
         Returns:
             True if crossed up through 0
         """
-        return vwap_current > 0 and vwap_prev <= 0
+        return momentum_current > 0 and momentum_prev <= 0
 
-    def vwap_crossed_down(self, vwap_current: float, vwap_prev: float) -> bool:
+    def momentum_crossed_down(self, momentum_current: float, momentum_prev: float) -> bool:
         """
-        Check if VWAP crossed below 0.
+        Check if momentum (WT1-WT2) crossed below 0.
 
         Args:
-            vwap_current: Current VWAP value
-            vwap_prev: Previous VWAP value
+            momentum_current: Current momentum value
+            momentum_prev: Previous momentum value
 
         Returns:
             True if crossed down through 0
         """
-        return vwap_current < 0 and vwap_prev >= 0
+        return momentum_current < 0 and momentum_prev >= 0
 
     @staticmethod
     def _ema(series: pd.Series, period: int) -> pd.Series:
@@ -230,8 +230,8 @@ def calculate_wavetrend(
         ma_len: MA length
 
     Returns:
-        Tuple of (wt1, wt2, vwap) Series
+        Tuple of (wt1, wt2, momentum) Series
     """
     wt = WaveTrend(channel_len, average_len, ma_len)
     result = wt.calculate(df)
-    return result.wt1, result.wt2, result.vwap
+    return result.wt1, result.wt2, result.momentum

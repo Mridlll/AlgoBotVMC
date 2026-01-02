@@ -34,7 +34,7 @@ class SignalState(Enum):
     ANCHOR_DETECTED = auto()         # Anchor wave found
     TRIGGER_DETECTED = auto()        # Trigger wave found
     AWAITING_MFI = auto()            # Waiting for MFI confirmation
-    AWAITING_VWAP = auto()           # Waiting for VWAP cross
+    AWAITING_MOMENTUM_CROSS = auto() # Waiting for momentum (WT1-WT2) to cross zero
     SIGNAL_READY = auto()            # All conditions met
 
 
@@ -96,14 +96,14 @@ class SignalDetector:
     1. Anchor wave: wt2 < -60
     2. Trigger wave: Subsequent smaller dip in wt2
     3. Money flow (red wave): Curving up
-    4. VWAP: Crosses above 0
+    4. Momentum (WT1-WT2): Crosses above 0
     5. Execute long
 
     Short Entry Sequence:
     1. Anchor wave: wt2 > 60
     2. Trigger wave: Subsequent smaller peak + WT cross down
     3. Money flow (green wave): Curving down
-    4. VWAP: Crosses below 0
+    4. Momentum (WT1-WT2): Crosses below 0
     5. Execute short
     """
 
@@ -184,11 +184,11 @@ class SignalDetector:
         # Get current values
         wt1 = wt_result.wt1.iloc[-1]
         wt2 = wt_result.wt2.iloc[-1]
-        vwap = wt_result.vwap.iloc[-1]
+        momentum = wt_result.momentum.iloc[-1]  # WT1-WT2, not real VWAP
         mfi = mf_result.mfi.iloc[-1]
 
         # Get previous values for cross detection
-        vwap_prev = wt_result.vwap.iloc[-2] if len(wt_result.vwap) > 1 else 0
+        momentum_prev = wt_result.momentum.iloc[-2] if len(wt_result.momentum) > 1 else 0
         cross_down = wt_result.cross_down.iloc[-1] if len(wt_result.cross_down) > 0 else False
 
         # Check for MFI curve using last few bars
@@ -198,7 +198,7 @@ class SignalDetector:
         # Process long setup
         long_signal = self._process_long_setup(
             timestamp, close_price, idx,
-            wt1, wt2, vwap, vwap_prev, mfi,
+            wt1, wt2, momentum, momentum_prev, mfi,
             mfi_curving_up
         )
         if long_signal:
@@ -208,7 +208,7 @@ class SignalDetector:
         # Process short setup
         short_signal = self._process_short_setup(
             timestamp, close_price, idx,
-            wt1, wt2, vwap, vwap_prev, mfi,
+            wt1, wt2, momentum, momentum_prev, mfi,
             mfi_curving_down, cross_down
         )
         if short_signal:
@@ -224,8 +224,8 @@ class SignalDetector:
         idx: int,
         wt1: float,
         wt2: float,
-        vwap: float,
-        vwap_prev: float,
+        momentum: float,
+        momentum_prev: float,
         mfi: float,
         mfi_curving_up: bool
     ) -> Optional[Signal]:
@@ -266,12 +266,12 @@ class SignalDetector:
         # Step 3: Wait for MFI to curve up (MFI must be negative)
         if self._long_state == SignalState.TRIGGER_DETECTED:
             if mfi_curving_up and mfi < 0:
-                self._long_state = SignalState.AWAITING_VWAP
+                self._long_state = SignalState.AWAITING_MOMENTUM_CROSS
             return None
 
-        # Step 4: Wait for VWAP to cross above 0
-        if self._long_state == SignalState.AWAITING_VWAP:
-            if vwap > 0 and vwap_prev <= 0:
+        # Step 4: Wait for momentum (WT1-WT2) to cross above 0
+        if self._long_state == SignalState.AWAITING_MOMENTUM_CROSS:
+            if momentum > 0 and momentum_prev <= 0:
                 # Signal ready!
                 signal = Signal(
                     signal_type=SignalType.LONG,
@@ -281,7 +281,7 @@ class SignalDetector:
                     trigger_wave=self._long_trigger,
                     wt1=wt1,
                     wt2=wt2,
-                    vwap=vwap,
+                    vwap=momentum,  # Note: This is momentum, not real VWAP
                     mfi=mfi,
                     timeframe=self.timeframe
                 )
@@ -302,8 +302,8 @@ class SignalDetector:
         idx: int,
         wt1: float,
         wt2: float,
-        vwap: float,
-        vwap_prev: float,
+        momentum: float,
+        momentum_prev: float,
         mfi: float,
         mfi_curving_down: bool,
         wt_cross_down: bool
@@ -345,12 +345,12 @@ class SignalDetector:
         # Step 3: Wait for MFI to curve down (MFI must be positive)
         if self._short_state == SignalState.TRIGGER_DETECTED:
             if mfi_curving_down and mfi > 0:
-                self._short_state = SignalState.AWAITING_VWAP
+                self._short_state = SignalState.AWAITING_MOMENTUM_CROSS
             return None
 
-        # Step 4: Wait for VWAP to cross below 0
-        if self._short_state == SignalState.AWAITING_VWAP:
-            if vwap < 0 and vwap_prev >= 0:
+        # Step 4: Wait for momentum (WT1-WT2) to cross below 0
+        if self._short_state == SignalState.AWAITING_MOMENTUM_CROSS:
+            if momentum < 0 and momentum_prev >= 0:
                 # Signal ready!
                 signal = Signal(
                     signal_type=SignalType.SHORT,
@@ -360,7 +360,7 @@ class SignalDetector:
                     trigger_wave=self._short_trigger,
                     wt1=wt1,
                     wt2=wt2,
-                    vwap=vwap,
+                    vwap=momentum,  # Note: This is momentum, not real VWAP
                     mfi=mfi,
                     timeframe=self.timeframe
                 )

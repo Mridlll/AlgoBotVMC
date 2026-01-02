@@ -26,7 +26,7 @@ class HTFAnalysis:
     wt2: float
     mfi: float
     mfi_prev: float
-    vwap: float
+    momentum: float  # WT1-WT2 momentum (NOT real VWAP)
 
     # Derived values
     wt_position: str       # "oversold", "overbought", "neutral"
@@ -111,7 +111,7 @@ class MTFBiasCalculator:
         wt2: float,
         mfi: float,
         mfi_prev: float,
-        vwap: float = 0.0
+        momentum: float = 0.0
     ) -> HTFAnalysis:
         """
         Analyze a single higher timeframe for bias.
@@ -122,7 +122,7 @@ class MTFBiasCalculator:
             wt2: WaveTrend 2 value
             mfi: Current Money Flow value
             mfi_prev: Previous Money Flow value
-            vwap: VWAP value (optional)
+            momentum: WT1-WT2 momentum value (NOT real VWAP)
 
         Returns:
             HTFAnalysis with bias determination
@@ -160,7 +160,7 @@ class MTFBiasCalculator:
             wt2=wt2,
             mfi=mfi,
             mfi_prev=mfi_prev,
-            vwap=vwap,
+            momentum=momentum,
             wt_position=wt_position,
             mfi_direction=mfi_direction,
             mfi_curving=mfi_curving,
@@ -340,14 +340,14 @@ def is_mfi_curving_down(mfi_series: pd.Series, lookback: int = 3) -> bool:
     return was_rising and now_falling
 
 
-def is_vwap_curving_up(vwap_series: pd.Series, lookback: int = 3) -> bool:
-    """Check if VWAP is curving up."""
-    if len(vwap_series) < lookback + 1:
+def is_momentum_curving_up(momentum_series: pd.Series, lookback: int = 3) -> bool:
+    """Check if momentum (WT1-WT2) is curving up."""
+    if len(momentum_series) < lookback + 1:
         return False
 
-    current = vwap_series.iloc[-1]
-    prev = vwap_series.iloc[-2]
-    prev2 = vwap_series.iloc[-3] if len(vwap_series) > 2 else prev
+    current = momentum_series.iloc[-1]
+    prev = momentum_series.iloc[-2]
+    prev2 = momentum_series.iloc[-3] if len(momentum_series) > 2 else prev
 
     was_falling = prev < prev2
     now_rising = current > prev
@@ -355,14 +355,14 @@ def is_vwap_curving_up(vwap_series: pd.Series, lookback: int = 3) -> bool:
     return was_falling and now_rising
 
 
-def is_vwap_curving_down(vwap_series: pd.Series, lookback: int = 3) -> bool:
-    """Check if VWAP is curving down."""
-    if len(vwap_series) < lookback + 1:
+def is_momentum_curving_down(momentum_series: pd.Series, lookback: int = 3) -> bool:
+    """Check if momentum (WT1-WT2) is curving down."""
+    if len(momentum_series) < lookback + 1:
         return False
 
-    current = vwap_series.iloc[-1]
-    prev = vwap_series.iloc[-2]
-    prev2 = vwap_series.iloc[-3] if len(vwap_series) > 2 else prev
+    current = momentum_series.iloc[-1]
+    prev = momentum_series.iloc[-2]
+    prev2 = momentum_series.iloc[-3] if len(momentum_series) > 2 else prev
 
     was_rising = prev > prev2
     now_falling = current < prev

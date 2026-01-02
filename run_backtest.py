@@ -146,8 +146,9 @@ def run_strategy_backtest(
         direction_filter=strategy_config.direction_filter
     )
 
-    # Apply VWAP filter if enabled
-    engine.use_vwap_filter = strategy_config.use_vwap_confirmation
+    # NOTE: BacktestEngine already uses real VWAP from VWAPCalculator internally.
+    # The use_vwap_confirmation config controls VWAP entry confirmation in the
+    # signal detector, which stores VWAP in signal metadata for logging purposes.
 
     # Run backtest
     try:

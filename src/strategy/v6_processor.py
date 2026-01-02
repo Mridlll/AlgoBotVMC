@@ -24,7 +24,7 @@ from config.config import (
 from indicators.wavetrend import WaveTrend, WaveTrendResult
 from indicators.money_flow import MoneyFlow, MoneyFlowResult
 from indicators.heikin_ashi import convert_to_heikin_ashi
-from strategy.signals import SignalType, Signal
+from strategy.signals import SignalType, Signal, AnchorWave, TriggerWave
 from utils.time_filter import should_trade_now
 
 
@@ -250,10 +250,40 @@ class V6SignalProcessor:
 
         # Create the signal
         current_price = float(df['close'].iloc[-1])
+        current_ts = df.index[-1] if hasattr(df.index[-1], 'timestamp') else current_time
+
+        # Extract indicator values
+        wt1_val = float(wt_result.wt1.iloc[-1]) if hasattr(wt_result.wt1, 'iloc') else float(wt_result.wt1[-1])
+        wt2_val = float(wt_result.wt2.iloc[-1]) if hasattr(wt_result.wt2, 'iloc') else float(wt_result.wt2[-1])
+        # Use momentum (wt1-wt2) - Note: Signal.vwap field receives this for now
+        # Real VWAP integration will come from VWAPCalculator
+        momentum_val = float(wt_result.momentum.iloc[-1]) if hasattr(wt_result.momentum, 'iloc') else float(wt_result.momentum[-1])
+        mfi_val = float(mf_result.mfi.iloc[-1]) if hasattr(mf_result.mfi, 'iloc') else float(mf_result.mfi[-1])
+
+        # Create placeholder anchor/trigger waves (v6_processor uses simplified detection)
+        anchor_wave = AnchorWave(
+            timestamp=current_ts,
+            wt2_value=wt2_val,
+            bar_index=bar_index,
+            signal_type=signal_type
+        )
+        trigger_wave = TriggerWave(
+            timestamp=current_ts,
+            wt2_value=wt2_val,
+            bar_index=bar_index,
+            has_cross=True
+        )
+
         signal = Signal(
             signal_type=signal_type,
+            timestamp=current_ts,
             entry_price=current_price,
-            timestamp=df.index[-1] if hasattr(df.index[-1], 'timestamp') else current_time,
+            anchor_wave=anchor_wave,
+            trigger_wave=trigger_wave,
+            wt1=wt1_val,
+            wt2=wt2_val,
+            vwap=momentum_val,  # TODO: Replace with real VWAP from VWAPCalculator
+            mfi=mfi_val,
             metadata={
                 'strategy': strat_name,
                 'asset': strat_config.asset,
@@ -261,8 +291,6 @@ class V6SignalProcessor:
                 'signal_mode': strat_config.signal_mode,
                 'anchor_level': strat_config.anchor_level,
                 'vwap_confirmed': vwap_confirmed,
-                'wt1': float(wt_result.wt1.iloc[-1]) if hasattr(wt_result.wt1, 'iloc') else float(wt_result.wt1[-1]),
-                'wt2': float(wt_result.wt2.iloc[-1]) if hasattr(wt_result.wt2, 'iloc') else float(wt_result.wt2[-1]),
             }
         )
 
@@ -394,21 +422,14 @@ class V6SignalProcessor:
 
         Long: Price should be above VWAP
         Short: Price should be below VWAP
+
+        NOTE: WaveTrendResult.momentum is NOT real VWAP - it's wt1-wt2.
+        Real VWAP confirmation requires VWAPCalculator integration.
+        For now, this returns True (skip check) since we don't have real VWAP.
         """
-        if not hasattr(wt_result, 'vwap') or wt_result.vwap is None:
-            return True  # Skip check if VWAP not calculated
-
-        vwap = wt_result.vwap
-        if hasattr(vwap, 'iloc'):
-            current_vwap = float(vwap.iloc[-1])
-        else:
-            current_vwap = float(vwap[-1])
-
-        if signal_type == SignalType.LONG:
-            return current_price > current_vwap
-        elif signal_type == SignalType.SHORT:
-            return current_price < current_vwap
-
+        # WaveTrendResult has 'momentum' (wt1-wt2), not real VWAP
+        # TODO: Integrate VWAPCalculator for real VWAP confirmation
+        # Until then, skip VWAP price confirmation
         return True
 
     def _passes_direction_filter(self, signal_type: SignalType, direction_filter: str) -> bool:
