@@ -4,34 +4,34 @@ Automated cryptocurrency trading bot based on the VuManChu Cipher B indicator st
 
 ## Performance Summary
 
-**Backtest Period:** December 2023 - December 2024 (1 Year)
+**Backtest Period:** December 2024 - December 2025 (1 Year)
 **Starting Capital:** $10,000
 **Risk Per Trade:** 3%
 
 | Metric | Value |
 |--------|-------|
-| **Total PnL** | $974,457 |
-| **Average Sharpe Ratio** | 2.79 |
-| **Win Rate** | 31-47% |
-| **Profit Factor** | 1.14-6.27 |
+| **Total PnL** | $479,747 |
+| **Average Sharpe Ratio** | 1.61 |
+| **Win Rate** | 34-40% |
+| **Strategies** | 15 |
 
 ### Per-Asset Performance
 
-| Asset | Net PnL | VWAP Filter | Strategies |
-|-------|---------|-------------|------------|
-| BTC | $99,716 | Enabled | 5 |
-| ETH | $237,340 | Disabled | 5 |
-| SOL | $485,072 | Disabled | 5 |
+| Asset | Net PnL | Sharpe | VWAP Filter | Strategies |
+|-------|---------|--------|-------------|------------|
+| BTC | $33,788 | 1.04 | Enabled | 5 |
+| ETH | $84,193 | 1.61 | Disabled | 5 |
+| SOL | $361,766 | 2.19 | Disabled | 5 |
 
 ### Top Strategies
 
-| Strategy | PnL | Sharpe | Time Filter |
-|----------|-----|--------|-------------|
-| SOL 5m SIMPLE | $166,586 | 1.26 | NY Hours |
-| SOL 5m ENHANCED_60 | $152,788 | 1.39 | NY Hours |
-| ETH 5m SIMPLE | $78,946 | 0.93 | NY Hours |
-| SOL 1h ENHANCED_70 | $74,115 | 6.88 | Weekends |
-| BTC 5m ENHANCED_60 | $54,339 | 2.82 | NY Hours |
+| Strategy | PnL | Trades | Win% | Time Filter |
+|----------|-----|--------|------|-------------|
+| SOL 5m SIMPLE | $139,745 | 773 | 38.2% | NY Hours |
+| SOL 15m SIMPLE | $111,499 | 284 | 34.2% | NY Hours |
+| SOL 5m ENHANCED_60 | $98,411 | 323 | 31.9% | NY Hours |
+| ETH 5m SIMPLE | $36,923 | 719 | 39.2% | NY Hours |
+| ETH 30m SIMPLE | $25,856 | 157 | 38.9% | Weekends |
 
 ---
 
@@ -39,8 +39,8 @@ Automated cryptocurrency trading bot based on the VuManChu Cipher B indicator st
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YourUsername/vmc_trading_bot.git
-cd vmc_trading_bot
+git clone https://github.com/Mridlll/AlgoBotVMC.git
+cd AlgoBotVMC
 
 # 2. Run setup (creates virtual environment, installs dependencies)
 # Windows:
@@ -472,18 +472,24 @@ The backtest generates:
 
 Example output:
 ```
-============================================================
+======================================================================
 VMC Trading Bot V6 - Backtest Results
-============================================================
+======================================================================
 Period: Last 365 days
 Starting Capital: $10,000
+Risk Per Trade: 3.0%
+======================================================================
 
 RESULTS BY ASSET:
-Asset       PnL      Win Rate   Trades   Sharpe
-BTC      $99,716      42.3%       156     2.82
-ETH     $237,340      38.5%       412     2.91
-SOL     $485,072      31.2%       687     2.64
-============================================================
+----------------------------------------------------------------------
+Asset             PnL   Win Rate   Trades   Sharpe     Max DD
+----------------------------------------------------------------------
+BTC      $    33,788      40.5%     1087     1.04      70.1%
+ETH      $    84,193      35.4%     1394     1.61      74.3%
+SOL      $   361,766      34.8%     1522     2.19      79.2%
+----------------------------------------------------------------------
+TOTAL    $   479,747                4003
+======================================================================
 ```
 
 ---
@@ -588,16 +594,21 @@ pip install -r requirements.txt --upgrade
 
 ## Version History
 
-### V6 (Current)
+### V6.1 (Current)
+- Fixed Sharpe calculation (per-trade returns)
+- Fixed VWAP confirmation using real VWAPCalculator
+- 15 optimized strategies across BTC, ETH, SOL
+- Per-asset VWAP optimization (BTC enabled, ETH/SOL disabled)
+- 1-year historical data included for backtesting
+
+### V6.0
 - Per-asset VWAP optimization
-- 15 optimized strategies
-- Fixed VWAP calculation bug
-- Average Sharpe: 2.79
+- 15 strategies (5 per asset)
+- Time filters: NY Hours, Weekends
 
 ### V5 (Previous)
 - 9 strategies
 - BTC SHORT_ONLY restriction
-- Average Sharpe: 0.31
 
 ---
 
