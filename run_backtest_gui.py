@@ -312,8 +312,18 @@ class BacktestGUI:
 
             data = data_cache[asset][tf]
 
+            # Apply time filter (CRITICAL for correct results!)
+            time_filter_mode = "all_hours"
+            if strat_config.time_filter and strat_config.time_filter.enabled:
+                time_filter_mode = strat_config.time_filter.mode.value if hasattr(strat_config.time_filter.mode, 'value') else str(strat_config.time_filter.mode)
+
+            filtered_data = self._filter_data_by_time(data, time_filter_mode)
+
+            if len(filtered_data) < 100:
+                continue
+
             # Run backtest
-            result = self._run_single_backtest(strat_name, strat_config, data)
+            result = self._run_single_backtest(strat_name, strat_config, filtered_data)
             if result:
                 results.append(result)
                 self.root.after(0, lambda n=strat_name, r=result:
@@ -400,6 +410,28 @@ class BacktestGUI:
                 pass
 
         return None
+
+    def _filter_data_by_time(self, data: pd.DataFrame, time_filter_mode: str) -> pd.DataFrame:
+        """Filter data based on time filter mode."""
+        if time_filter_mode == "all_hours" or not time_filter_mode:
+            return data
+
+        df = data.copy()
+
+        if time_filter_mode == "ny_hours_only":
+            # NY hours: 14:00-21:00 UTC on weekdays
+            df['hour'] = df.index.hour
+            df['weekday'] = df.index.weekday
+            mask = (df['hour'] >= 14) & (df['hour'] < 21) & (df['weekday'] < 5)
+            df = df[mask].drop(columns=['hour', 'weekday'])
+
+        elif time_filter_mode == "weekends_only":
+            # Weekends: Saturday (5) and Sunday (6)
+            df['weekday'] = df.index.weekday
+            mask = df['weekday'] >= 5
+            df = df[mask].drop(columns=['weekday'])
+
+        return df
 
     def _run_single_backtest(self, strategy_name: str, config, data: pd.DataFrame) -> Optional[dict]:
         """Run backtest for a single strategy."""
