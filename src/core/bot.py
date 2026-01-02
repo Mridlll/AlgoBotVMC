@@ -19,6 +19,7 @@ from strategy.multi_timeframe import MultiTimeframeCoordinator, MultiTimeframeSi
 from strategy.v6_processor import V6SignalProcessor, V6ScanResult
 from persistence.trade_store import TradeStore
 from utils.logger import get_logger, setup_logger
+from utils.daily_summary import DailySummaryLogger
 
 logger = get_logger("vmc_bot")
 
@@ -78,6 +79,9 @@ class VMCBot:
 
         # Notification callback
         self._notification_callback = None
+
+        # Daily summary logger
+        self.daily_summary = DailySummaryLogger(log_dir="logs")
 
         # Running flag
         self._running = False
@@ -380,6 +384,10 @@ class VMCBot:
                     await self._reconcile_positions()
                     last_reconcile = now
 
+                # Check for daily summary generation (at midnight UTC)
+                if self.daily_summary.should_generate(now):
+                    await self._generate_daily_summary()
+
                 # Check for new signals
                 signals = await self.run_once()
 
@@ -527,6 +535,16 @@ class VMCBot:
 
             logger.info(f"Trade {trade.trade_id} closed: {reason} @ {exit_price}, PnL: ${pnl:.2f}")
 
+            # Record trade closed for daily summary
+            self.daily_summary.record_trade_closed(
+                symbol=trade.symbol,
+                direction='LONG' if trade.is_long else 'SHORT',
+                entry_price=trade.entry_price,
+                exit_price=exit_price,
+                pnl=pnl,
+                exit_reason=reason
+            )
+
             await self._notify("trade_closed", {
                 "trade_id": trade.trade_id,
                 "symbol": trade.symbol,
@@ -541,6 +559,54 @@ class VMCBot:
         except Exception as e:
             logger.error(f"Error closing trade {trade.trade_id}: {e}")
             await self._notify("error", {"message": f"Failed to close trade: {e}"})
+
+    async def _generate_daily_summary(self) -> None:
+        """
+        Generate and log daily performance summary.
+
+        Called at midnight UTC to summarize the previous day's trading.
+        """
+        try:
+            # Get current balance
+            balance = await self.exchange.get_balance()
+            current_balance = balance.total_balance if balance else 0.0
+
+            # Get active positions for the summary
+            active_positions = []
+            if self.trade_manager:
+                for trade in self.trade_manager._active_trades.values():
+                    # Get current price for unrealized PnL
+                    try:
+                        ticker = await self.exchange.get_ticker(trade.symbol)
+                        current_price = ticker.get('price', trade.entry_price)
+                        if trade.is_long:
+                            unrealized = (current_price - trade.entry_price) * trade.size
+                        else:
+                            unrealized = (trade.entry_price - current_price) * trade.size
+                    except Exception:
+                        unrealized = 0.0
+
+                    active_positions.append({
+                        'symbol': trade.symbol,
+                        'direction': 'LONG' if trade.is_long else 'SHORT',
+                        'entry_price': trade.entry_price,
+                        'unrealized_pnl': unrealized
+                    })
+
+            # Generate summary
+            summary = self.daily_summary.generate(
+                current_balance=current_balance,
+                active_positions=active_positions
+            )
+
+            # Log the formatted summary
+            logger.info(f"\n{summary.format()}")
+
+            # Send Discord notification
+            await self._notify("daily_summary", summary.to_discord_embed())
+
+        except Exception as e:
+            logger.error(f"Error generating daily summary: {e}")
 
     async def _reconcile_positions(self) -> None:
         """
@@ -884,6 +950,13 @@ class VMCBot:
 
             if trade:
                 self.state.total_trades += 1
+
+                # Record trade opened for daily summary
+                self.daily_summary.record_trade_opened(
+                    symbol=trade.symbol,
+                    direction='LONG' if trade.is_long else 'SHORT',
+                    entry_price=trade.entry_price
+                )
 
                 # Persist trade to database
                 if self.trade_store:

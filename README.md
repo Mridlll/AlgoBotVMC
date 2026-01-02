@@ -443,6 +443,77 @@ tail -f logs/production.log
 
 ---
 
+## Backtesting
+
+Verify strategy performance on historical data before going live.
+
+### Running a Backtest
+
+```bash
+# Test all 15 strategies (1 year of data)
+python run_backtest.py
+
+# Test specific asset
+python run_backtest.py --asset BTC
+
+# Test last 90 days
+python run_backtest.py --days 90
+
+# Test SOL strategies for 6 months
+python run_backtest.py --asset SOL --days 180
+```
+
+### Backtest Output
+
+The backtest generates:
+1. **Summary table** - PnL, win rate, Sharpe ratio per asset
+2. **Strategy details** - Performance of each strategy
+3. **Trade log CSV** - All trades exported to `output/backtest_trades.csv`
+
+Example output:
+```
+============================================================
+VMC Trading Bot V6 - Backtest Results
+============================================================
+Period: Last 365 days
+Starting Capital: $10,000
+
+RESULTS BY ASSET:
+Asset       PnL      Win Rate   Trades   Sharpe
+BTC      $99,716      42.3%       156     2.82
+ETH     $237,340      38.5%       412     2.91
+SOL     $485,072      31.2%       687     2.64
+============================================================
+```
+
+---
+
+## Daily Summary Logs
+
+The bot automatically generates daily performance summaries at midnight UTC.
+
+### Log Location
+
+Daily summaries are written to: `logs/daily_summary.log`
+
+### Summary Contents
+
+Each daily summary includes:
+- Trades opened/closed that day
+- Daily PnL
+- Running balance
+- Win rate for the day
+- Active positions with unrealized PnL
+
+### Discord Notifications
+
+If Discord is enabled, daily summaries are also sent as notifications with:
+- Color-coded embeds (green = profit, red = loss)
+- Key metrics at a glance
+- Active position overview
+
+---
+
 ## File Structure
 
 ```
@@ -455,9 +526,15 @@ vmc_trading_bot/
 │   ├── core/                    # Bot core logic
 │   ├── exchanges/               # Hyperliquid integration
 │   ├── indicators/              # Technical indicators
-│   └── strategy/                # Trading strategies
-├── logs/                        # Log files
+│   ├── strategy/                # Trading strategies
+│   └── utils/                   # Utilities (logger, daily summary)
+├── backtest/                    # Backtesting engine
+├── logs/
+│   ├── production.log           # Main bot log
+│   └── daily_summary.log        # Daily performance summaries
+├── output/                      # Backtest results
 ├── data/                        # Trade database
+├── run_backtest.py              # Client backtest script
 ├── setup_wizard.py              # Configuration wizard
 ├── run_production.py            # Production runner
 ├── setup.bat / setup.sh         # Setup scripts
