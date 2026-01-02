@@ -186,6 +186,63 @@ strategies:
 
 ---
 
+## Testnet vs Mainnet
+
+### Testnet Mode (Default - Recommended for Testing)
+
+The bot runs on **testnet by default** for safe practice trading:
+
+```yaml
+exchange:
+  testnet: true    # Paper trading, no real funds
+```
+
+**Testnet features:**
+- Uses Hyperliquid testnet (fake money)
+- Get testnet USDC at: https://app.hyperliquid.xyz/drip
+- All features work identically to mainnet
+- Perfect for testing configuration and strategies
+
+### Mainnet Mode (Real Money Trading)
+
+**WARNING: Mainnet uses real funds! Only switch after thorough testnet testing.**
+
+To switch to mainnet:
+
+1. **Use the mainnet template:**
+   ```bash
+   cp config/config_v6_mainnet.example.yaml config/config.yaml
+   ```
+
+2. **Or modify your existing config:**
+   ```yaml
+   exchange:
+     testnet: false    # REAL MONEY TRADING!
+   ```
+
+3. **Add your mainnet credentials** (from https://app.hyperliquid.xyz/API)
+
+### Mainnet Safety Checklist
+
+Before going live, ensure you have:
+
+- [ ] Tested on testnet for at least 1 week
+- [ ] Verified all settings work correctly
+- [ ] Set conservative risk (1-2% per trade)
+- [ ] Enabled Discord notifications for monitoring
+- [ ] Only deposited funds you can afford to lose
+- [ ] Understood the strategy and expected drawdowns
+
+### Risk Settings Comparison
+
+| Setting | Testnet (Testing) | Mainnet (Conservative) | Mainnet (Moderate) |
+|---------|-------------------|------------------------|-------------------|
+| `risk_percent` | 3.0% | 1.0% | 2.0% |
+| `leverage` | 3.0x | 2.0x | 3.0x |
+| `max_positions` | 3 | 3 | 3 |
+
+---
+
 ## Running the Bot
 
 ### Basic Mode
@@ -391,8 +448,9 @@ tail -f logs/production.log
 ```
 vmc_trading_bot/
 ├── config/
-│   ├── config.yaml              # Your configuration
-│   └── config_v6_production.yaml # Template
+│   ├── config.yaml                    # Your configuration
+│   ├── config_v6_production.yaml      # Testnet template
+│   └── config_v6_mainnet.example.yaml # Mainnet template
 ├── src/
 │   ├── core/                    # Bot core logic
 │   ├── exchanges/               # Hyperliquid integration
@@ -466,4 +524,4 @@ pip install -r requirements.txt --upgrade
 
 ---
 
-*Last Updated: December 2025*
+*Last Updated: January 2026*
