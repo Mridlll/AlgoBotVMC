@@ -159,9 +159,9 @@ class BacktestGUI:
     def update_cache_status(self):
         """Check and display cache status."""
         cache_dirs = [
-            Path("data/binance_cache"),
-            Path("data/binance_cache_1year"),
-            Path("data/cache")
+            SCRIPT_DIR / "data" / "binance_cache",
+            SCRIPT_DIR / "data" / "binance_cache_1year",
+            SCRIPT_DIR / "data" / "cache"
         ]
 
         status_lines = []
@@ -236,9 +236,11 @@ class BacktestGUI:
         self.root.after(0, lambda: self.log("-" * 60))
 
         # Load config
-        config_path = Path("config/config_v6_production.yaml")
+        config_path = SCRIPT_DIR / "config" / "config_v6_production.yaml"
         if not config_path.exists():
-            self.root.after(0, lambda: self.log("Error: Config file not found!"))
+            self.root.after(0, lambda: self.log(f"Error: Config file not found!"))
+            self.root.after(0, lambda: self.log(f"Looking for: {config_path}"))
+            self.root.after(0, lambda: self.log(f"Current dir: {os.getcwd()}"))
             return
 
         config = load_config(str(config_path))
@@ -257,7 +259,7 @@ class BacktestGUI:
             assets.add(strat.asset)
 
         # Initialize data loader
-        data_loader = DataLoader(cache_dir="data/cache")
+        data_loader = DataLoader(cache_dir=str(SCRIPT_DIR / "data" / "cache"))
 
         # Connect to exchange only if fetching
         exchange = None
@@ -348,12 +350,12 @@ class BacktestGUI:
         """Load historical data from cache or exchange."""
         from datetime import timezone
 
-        # Check cache first
+        # Check cache first (use absolute paths based on script location)
         cache_locations = [
-            Path("data/binance_cache") / f"{asset.lower()}_{timeframe}.csv",
-            Path("data/binance_cache_1year") / f"{asset.lower()}_{timeframe}.csv",
-            Path("data/cache") / f"{asset}_{timeframe}.csv",
-            Path("data/cache") / f"{asset.lower()}_{timeframe}.csv",
+            SCRIPT_DIR / "data" / "binance_cache" / f"{asset.lower()}_{timeframe}.csv",
+            SCRIPT_DIR / "data" / "binance_cache_1year" / f"{asset.lower()}_{timeframe}.csv",
+            SCRIPT_DIR / "data" / "cache" / f"{asset}_{timeframe}.csv",
+            SCRIPT_DIR / "data" / "cache" / f"{asset.lower()}_{timeframe}.csv",
         ]
 
         for cache_file in cache_locations:
