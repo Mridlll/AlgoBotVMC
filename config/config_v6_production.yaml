@@ -32,8 +32,8 @@
 exchange:
   name: "hyperliquid"
   api_key: ""                    # Not used for Hyperliquid
-  api_secret: "0xb7fd1a38a0eafc6fb2fb47390c5596fd5aaeab1496873d86f6a9e11d5d409622"
-  wallet_address: "0xEfA20161a658baB02ddb0884e81fCf4702544161"
+  api_secret: "0x7ddba2c18d88de4280b2b2fccf35804cc526877d06e2d894989e6d9bef2d8741"
+  wallet_address: "0xeb6eb13007a3b98b272771b2b0e9f73ee6b09fe1"
   account_address: "0x8A41f91F21260137Ef17aafde0ac2A13e5036f91"
   testnet: true                  # Set to false for MAINNET (real money!)
 
@@ -51,6 +51,9 @@ trading:
   max_positions: 9               # 3 per asset x 3 assets
   max_positions_per_asset: 3     # Up to 3 concurrent positions per asset
   leverage: 3.0                  # 3x leverage
+
+  # Check interval (use smallest strategy timeframe)
+  timeframe: "5m"                # Check every 5 minutes
 
   # V6 Feature Flags
   use_vwap_confirmation: true    # Master switch (per-asset override below)
