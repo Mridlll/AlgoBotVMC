@@ -48,8 +48,8 @@ trading:
 
   # Risk Management
   risk_percent: 2.0              # 2% per trade (conservative for production)
-  max_positions: 3               # 1 per asset
-  max_positions_per_asset: 1     # IMPORTANT: Only 1 position per asset at a time
+  max_positions: 9               # 3 per asset x 3 assets
+  max_positions_per_asset: 3     # Up to 3 concurrent positions per asset
   leverage: 3.0                  # 3x leverage
 
   # V6 Feature Flags
