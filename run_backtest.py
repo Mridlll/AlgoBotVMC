@@ -79,32 +79,50 @@ async def load_historical_data(
     data_loader: DataLoader,
     exchange: Optional[HyperliquidExchange] = None
 ) -> Optional[pd.DataFrame]:
-    """Load historical data from cache or exchange."""
+    """Load historical data from cache (preferred) or exchange (fallback)."""
+    from datetime import timezone
 
-    # Try cache first
-    cache_dir = Path("data/binance_cache")
-    cache_file = cache_dir / f"{asset.lower()}_{timeframe}.csv"
+    # Check multiple cache locations
+    cache_locations = [
+        Path("data/binance_cache") / f"{asset.lower()}_{timeframe}.csv",
+        Path("data/binance_cache_1year") / f"{asset.lower()}_{timeframe}.csv",
+        Path("data/cache") / f"{asset}_{timeframe}.csv",
+        Path("data/cache") / f"{asset.lower()}_{timeframe}.csv",
+    ]
 
-    if cache_file.exists():
-        try:
-            df = pd.read_csv(cache_file, parse_dates=['timestamp'], index_col='timestamp')
-            # Filter to requested date range
-            end_date = datetime.utcnow()
-            start_date = end_date - timedelta(days=days)
+    for cache_file in cache_locations:
+        if cache_file.exists():
+            try:
+                df = pd.read_csv(cache_file, parse_dates=['timestamp'], index_col='timestamp')
 
-            if df.index.min() <= start_date:
-                mask = (df.index >= start_date) & (df.index <= end_date)
-                filtered_df = df[mask]
-                if len(filtered_df) > 100:
-                    logger.info(f"Loaded {len(filtered_df)} {timeframe} candles for {asset} from cache")
-                    return filtered_df
-        except Exception as e:
-            logger.warning(f"Error loading cache for {asset}/{timeframe}: {e}")
+                # Use ALL available data if we have enough candles
+                if len(df) > 100:
+                    # Filter to requested date range if possible
+                    end_date = datetime.now(timezone.utc)
+                    start_date = end_date - timedelta(days=days)
 
-    # Try loading from exchange if available
+                    # Make index timezone-aware if needed
+                    if df.index.tz is None:
+                        df.index = df.index.tz_localize('UTC')
+
+                    mask = (df.index >= start_date) & (df.index <= end_date)
+                    filtered_df = df[mask]
+
+                    # Use filtered data if enough, otherwise use all available
+                    if len(filtered_df) > 100:
+                        logger.info(f"Loaded {len(filtered_df)} {timeframe} candles for {asset} from cache")
+                        return filtered_df
+                    elif len(df) > 100:
+                        logger.info(f"Loaded {len(df)} {timeframe} candles for {asset} from cache (full dataset)")
+                        return df
+            except Exception as e:
+                logger.debug(f"Cache {cache_file} not usable: {e}")
+                continue
+
+    # Only try exchange if explicitly provided and cache failed
     if exchange:
         try:
-            end_date = datetime.utcnow()
+            end_date = datetime.now(timezone.utc)
             start_date = end_date - timedelta(days=days)
             df = await data_loader.load_from_exchange(
                 exchange=exchange,
@@ -114,7 +132,6 @@ async def load_historical_data(
                 end_date=end_date
             )
             if len(df) > 100:
-                # Save to cache
                 data_loader.save_to_cache(df, asset, timeframe)
                 return df
         except Exception as e:
