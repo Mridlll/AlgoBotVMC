@@ -309,14 +309,10 @@ class TradeManager:
             actual_fill_price = filled_order.avg_fill_price or signal.entry_price
             trade.entry_price = actual_fill_price
 
-            # Recalculate TP if using actual fill price (differs from signal price)
-            if actual_fill_price != signal.entry_price and self.tp_method == TakeProfitMethod.FIXED_RR:
-                sl_distance = abs(actual_fill_price - trade.stop_loss)
-                rr_ratio = risk_params.risk_reward if hasattr(risk_params, 'risk_reward') else 2.0
-                if is_long:
-                    trade.take_profit = actual_fill_price + (sl_distance * rr_ratio)
-                else:
-                    trade.take_profit = actual_fill_price - (sl_distance * rr_ratio)
+            # BACKTEST-ALIGNED: Do NOT recalculate TP based on fill price
+            # Previous behavior adjusted TP when fill differed from signal price
+            # Backtest uses original signal TP without adjustment
+            # The original TP from risk_params is already set in trade.take_profit
 
             # Update trade with order info
             trade.status = TradeStatus.OPEN

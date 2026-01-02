@@ -367,8 +367,11 @@ class VMCBot:
         reconcile_interval = 300  # 5 minutes
 
         # Track last exit check
+        # BACKTEST-ALIGNED: Check only at bar closes (5 minute interval = smallest TF)
+        # Previous: 30 seconds (intra-bar checks not aligned with backtest)
+        # Now: 300 seconds matches 5m bar closes
         last_exit_check = datetime.utcnow()
-        exit_check_interval = 30  # 30 seconds
+        exit_check_interval = 300  # 5 minutes - aligned with smallest bar timeframe
 
         while self._running:
             try:

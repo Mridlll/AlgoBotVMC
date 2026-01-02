@@ -429,10 +429,13 @@ vwap:
 # ==============================================================================
 # STOP LOSS CONFIGURATION
 # ==============================================================================
+# ALIGNED WITH BACKTEST: Uses SWING method (5 candle lookback, 0.5% buffer)
+# - For LONG: SL = swing_low * 0.995 (below recent 5-bar low)
+# - For SHORT: SL = swing_high * 1.005 (above recent 5-bar high)
 stop_loss:
-  method: "atr"                  # ATR-based stop loss
-  atr_multiplier: 2.0            # 2 x ATR(14)
-  atr_period: 14
+  method: "swing"                # SWING method - matches backtest
+  swing_lookback: 5              # 5 candle lookback for swing detection
+  buffer_percent: 0.5            # 0.5% buffer from swing level
 
 # ==============================================================================
 # EXIT CONFIGURATION

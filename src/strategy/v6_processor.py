@@ -25,8 +25,12 @@ from indicators.wavetrend import WaveTrend, WaveTrendResult
 from indicators.money_flow import MoneyFlow, MoneyFlowResult
 from indicators.heikin_ashi import convert_to_heikin_ashi
 from indicators.vwap import VWAPCalculator
-from strategy.signals import SignalType, Signal, AnchorWave, TriggerWave
+from strategy.signals import (
+    SignalType, Signal, AnchorWave, TriggerWave,
+    SignalDetector, SimpleSignalDetector  # Full state machine detectors
+)
 from utils.time_filter import should_trade_now
+from typing import Union
 
 
 @dataclass
@@ -108,6 +112,44 @@ class V6SignalProcessor:
         # Track signal state per strategy to avoid duplicates
         self._last_signal_bar: Dict[str, int] = {}
 
+        # Per-strategy signal detectors (full state machine to match backtest)
+        # CRITICAL: This aligns live bot with backtest signal detection
+        self._signal_detectors: Dict[str, Union[SignalDetector, SimpleSignalDetector]] = {}
+        self._init_signal_detectors()
+
+    def _init_signal_detectors(self) -> None:
+        """Initialize per-strategy signal detectors.
+
+        Creates either SimpleSignalDetector or SignalDetector based on signal_mode:
+        - simple: Uses SimpleSignalDetector with ±53 levels
+        - enhanced: Uses full SignalDetector with 4-step state machine
+
+        This matches the backtest engine behavior exactly.
+        """
+        strategies = self.config.get_enabled_strategies()
+
+        for strat_name, strat_config in strategies.items():
+            if strat_config.signal_mode == "simple":
+                # Simple mode: single-bar cross detection with ±53 levels
+                self._signal_detectors[strat_name] = SimpleSignalDetector(
+                    oversold_level=-53,
+                    overbought_level=53,
+                    timeframe=strat_config.timeframe
+                )
+            else:
+                # Enhanced mode: full 4-step state machine
+                # Uses anchor_level (60 or 70) for entry zones
+                anchor_level = strat_config.anchor_level or 60
+                self._signal_detectors[strat_name] = SignalDetector(
+                    anchor_level_long=-anchor_level,
+                    anchor_level_short=anchor_level,
+                    trigger_lookback=20,  # Matches backtest default
+                    mfi_lookback=3,       # Matches backtest default
+                    timeframe=strat_config.timeframe
+                )
+
+        logger.info(f"Initialized {len(self._signal_detectors)} signal detectors (backtest-aligned)")
+
     def get_required_timeframes(self, asset: Optional[str] = None) -> List[str]:
         """Get list of unique timeframes needed for V6 strategies.
 
@@ -184,7 +226,10 @@ class V6SignalProcessor:
         candles_by_tf: Dict[str, pd.DataFrame],
         current_time: datetime,
     ) -> Optional[StrategySignal]:
-        """Process a single V6 strategy.
+        """Process a single V6 strategy using full state machine detection.
+
+        BACKTEST-ALIGNED: Uses SignalDetector (4-step state machine for enhanced)
+        or SimpleSignalDetector (single-bar for simple) to match backtest exactly.
 
         Args:
             strat_name: Strategy name/ID
@@ -215,15 +260,52 @@ class V6SignalProcessor:
         wt_result = self.wavetrend.calculate(ha_df)
         mf_result = self.money_flow.calculate(ha_df)
 
-        # Detect signal based on mode
-        signal_type = self._detect_signal(
-            strat_config=strat_config,
-            wt_result=wt_result,
-            mf_result=mf_result,
-        )
+        # Get the appropriate signal detector for this strategy
+        detector = self._signal_detectors.get(strat_name)
+        if detector is None:
+            logger.error(f"{strat_name}: No signal detector found - reinitializing")
+            self._init_signal_detectors()
+            detector = self._signal_detectors.get(strat_name)
+            if detector is None:
+                return None
 
-        if signal_type is None:
+        # Extract current values for signal detection
+        bar_index = len(df) - 1
+        current_price = float(df['close'].iloc[-1])
+        current_ts = df.index[-1] if hasattr(df.index[-1], 'timestamp') else current_time
+
+        # Detect signal using full state machine (BACKTEST-ALIGNED)
+        # Different detectors have different interfaces
+        signal = None
+        if isinstance(detector, SimpleSignalDetector):
+            # SimpleSignalDetector: single-bar cross detection
+            wt1_val = float(wt_result.wt1.iloc[-1])
+            wt2_val = float(wt_result.wt2.iloc[-1])
+            mfi_val = float(mf_result.mfi.iloc[-1]) if hasattr(mf_result, 'mfi') else 0.0
+
+            signal = detector.process_bar(
+                timestamp=current_ts,
+                close_price=current_price,
+                wt1=wt1_val,
+                wt2=wt2_val,
+                mfi=mfi_val,
+                vwap=0.0  # VWAP check done separately below
+            )
+        else:
+            # SignalDetector: full 4-step state machine
+            # Processes through: ANCHOR -> TRIGGER -> MFI -> MOMENTUM_CROSS
+            signal = detector.process_bar(
+                timestamp=current_ts,
+                close_price=current_price,
+                wt_result=wt_result,
+                mf_result=mf_result,
+                bar_idx=bar_index
+            )
+
+        if signal is None:
             return None
+
+        signal_type = signal.signal_type
 
         # Check direction filter
         if not self._passes_direction_filter(signal_type, strat_config.direction_filter):
@@ -242,7 +324,6 @@ class V6SignalProcessor:
                 logger.warning(f"{strat_name}: Error calculating VWAP: {e}")
                 real_vwap = None
 
-            current_price = float(df['close'].iloc[-1])
             vwap_confirmed = self._check_vwap_confirmation(
                 signal_type=signal_type,
                 current_price=current_price,
@@ -254,57 +335,23 @@ class V6SignalProcessor:
                 return None
 
         # Avoid duplicate signals on same bar
-        bar_index = len(df) - 1
         last_bar = self._last_signal_bar.get(strat_name, -1)
         if bar_index == last_bar:
             return None
         self._last_signal_bar[strat_name] = bar_index
 
-        # Create the signal
-        current_price = float(df['close'].iloc[-1])
-        current_ts = df.index[-1] if hasattr(df.index[-1], 'timestamp') else current_time
+        # Update signal metadata with strategy context
+        signal.metadata.update({
+            'strategy': strat_name,
+            'asset': strat_config.asset,
+            'timeframe': tf,
+            'signal_mode': strat_config.signal_mode,
+            'anchor_level': strat_config.anchor_level,
+            'vwap_confirmed': vwap_confirmed,
+            'detection_mode': 'state_machine',  # Mark as using full detector
+        })
 
-        # Extract indicator values
-        wt1_val = float(wt_result.wt1.iloc[-1]) if hasattr(wt_result.wt1, 'iloc') else float(wt_result.wt1[-1])
-        wt2_val = float(wt_result.wt2.iloc[-1]) if hasattr(wt_result.wt2, 'iloc') else float(wt_result.wt2[-1])
-        # Use momentum (wt1-wt2) - Note: Signal.vwap field receives this for now
-        # Real VWAP integration will come from VWAPCalculator
-        momentum_val = float(wt_result.momentum.iloc[-1]) if hasattr(wt_result.momentum, 'iloc') else float(wt_result.momentum[-1])
-        mfi_val = float(mf_result.mfi.iloc[-1]) if hasattr(mf_result.mfi, 'iloc') else float(mf_result.mfi[-1])
-
-        # Create placeholder anchor/trigger waves (v6_processor uses simplified detection)
-        anchor_wave = AnchorWave(
-            timestamp=current_ts,
-            wt2_value=wt2_val,
-            bar_index=bar_index,
-            signal_type=signal_type
-        )
-        trigger_wave = TriggerWave(
-            timestamp=current_ts,
-            wt2_value=wt2_val,
-            bar_index=bar_index,
-            has_cross=True
-        )
-
-        signal = Signal(
-            signal_type=signal_type,
-            timestamp=current_ts,
-            entry_price=current_price,
-            anchor_wave=anchor_wave,
-            trigger_wave=trigger_wave,
-            wt1=wt1_val,
-            wt2=wt2_val,
-            vwap=momentum_val,  # TODO: Replace with real VWAP from VWAPCalculator
-            mfi=mfi_val,
-            metadata={
-                'strategy': strat_name,
-                'asset': strat_config.asset,
-                'timeframe': tf,
-                'signal_mode': strat_config.signal_mode,
-                'anchor_level': strat_config.anchor_level,
-                'vwap_confirmed': vwap_confirmed,
-            }
-        )
+        logger.info(f"{strat_name}: Signal detected via state machine - {signal_type.value} @ {current_price:.2f}")
 
         return StrategySignal(
             strategy_name=strat_name,
