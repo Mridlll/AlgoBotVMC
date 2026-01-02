@@ -35,9 +35,9 @@ from utils.logger import setup_logger, get_logger
 setup_logger(log_level="INFO")
 logger = get_logger("backtest")
 
-# Constants
-INITIAL_BALANCE = 10000.0
-RISK_PERCENT = 3.0
+# Default Constants (overridden by config)
+DEFAULT_INITIAL_BALANCE = 10000.0
+DEFAULT_RISK_PERCENT = 3.0
 COMMISSION = 0.06  # 0.06% (engine divides by 100)
 
 
@@ -144,7 +144,8 @@ def run_strategy_backtest(
     strategy_name: str,
     strategy_config: StrategyInstanceConfig,
     data: pd.DataFrame,
-    anchor_level: int = 53
+    initial_balance: float = DEFAULT_INITIAL_BALANCE,
+    risk_percent: float = DEFAULT_RISK_PERCENT
 ) -> Optional[StrategyResult]:
     """Run backtest for a single strategy."""
 
@@ -152,8 +153,8 @@ def run_strategy_backtest(
 
     # Create engine with strategy settings
     engine = BacktestEngine(
-        initial_balance=INITIAL_BALANCE,
-        risk_percent=RISK_PERCENT,
+        initial_balance=initial_balance,
+        risk_percent=risk_percent,
         commission_percent=COMMISSION,
         signal_mode=signal_mode,
         tp_method=TakeProfitMethod.OSCILLATOR,  # V6 uses oscillator exit
@@ -222,14 +223,14 @@ def filter_data_by_time(
     return df
 
 
-def print_summary(results: List[StrategyResult], days: int):
+def print_summary(results: List[StrategyResult], days: int, initial_balance: float = DEFAULT_INITIAL_BALANCE, risk_percent: float = DEFAULT_RISK_PERCENT):
     """Print backtest summary."""
     print("\n" + "=" * 70)
     print("VMC Trading Bot V6 - Backtest Results")
     print("=" * 70)
     print(f"Period: Last {days} days")
-    print(f"Starting Capital: ${INITIAL_BALANCE:,.0f}")
-    print(f"Risk Per Trade: {RISK_PERCENT}%")
+    print(f"Starting Capital: ${initial_balance:,.0f}")
+    print(f"Risk Per Trade: {risk_percent}%")
     print("=" * 70)
 
     # Group by asset
@@ -365,12 +366,18 @@ Examples:
     config = load_config(str(config_path))
     strategies = config.get_enabled_strategies()
 
+    # Get trading settings from config
+    initial_balance = DEFAULT_INITIAL_BALANCE
+    risk_percent = getattr(config.trading, 'risk_percent', DEFAULT_RISK_PERCENT)
+    leverage = getattr(config.trading, 'leverage', 10)
+
     if not strategies:
         print("Error: No V6 strategies found in config.")
         print("Make sure your config file has V6 strategies defined.")
         sys.exit(1)
 
     print(f"Loaded {len(strategies)} strategies from config")
+    print(f"Risk: {risk_percent}% | Leverage: {leverage}x")
 
     # Filter by asset if specified
     if args.asset:
@@ -453,7 +460,7 @@ Examples:
 
         print(f"  {strat_name}: Testing on {len(filtered_data)} candles...", end=" ", flush=True)
 
-        result = run_strategy_backtest(strat_name, strat_config, filtered_data)
+        result = run_strategy_backtest(strat_name, strat_config, filtered_data, initial_balance, risk_percent)
         if result:
             results.append(result)
             print(f"{result.total_trades} trades, ${result.total_pnl:,.0f}")
@@ -462,7 +469,7 @@ Examples:
 
     # Print summary
     if results:
-        print_summary(results, args.days)
+        print_summary(results, args.days, initial_balance, risk_percent)
         export_trades_csv(results, Path(args.output))
     else:
         print("\nNo results to display. Check data availability.")

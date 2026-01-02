@@ -301,10 +301,18 @@ class BacktestGUI:
         config = load_config(str(config_path))
         strategies = config.get_enabled_strategies()
 
+        # Get trading settings from config
+        trading_settings = {
+            'risk_percent': getattr(config.trading, 'risk_percent', 3.0),
+            'leverage': getattr(config.trading, 'leverage', 10),
+            'initial_balance': 10000.0,  # Standard backtest capital
+        }
+
         if asset_filter:
             strategies = {k: v for k, v in strategies.items() if v.asset == asset_filter}
 
         self.root.after(0, lambda: self.log(f"Loaded {len(strategies)} strategies"))
+        self.root.after(0, lambda: self.log(f"Risk: {trading_settings['risk_percent']}% | Leverage: {trading_settings['leverage']}x"))
 
         # Get unique timeframes/assets
         timeframes = set()
@@ -378,7 +386,7 @@ class BacktestGUI:
                 continue
 
             # Run backtest
-            result = self._run_single_backtest(strat_name, strat_config, filtered_data)
+            result = self._run_single_backtest(strat_name, strat_config, filtered_data, trading_settings)
             if result:
                 results.append(result)
                 self.root.after(0, lambda n=strat_name, r=result:
@@ -501,14 +509,17 @@ class BacktestGUI:
 
         return df
 
-    def _run_single_backtest(self, strategy_name: str, config, data: pd.DataFrame) -> Optional[dict]:
+    def _run_single_backtest(self, strategy_name: str, config, data: pd.DataFrame, trading_settings: dict = None) -> Optional[dict]:
         """Run backtest for a single strategy."""
+        if trading_settings is None:
+            trading_settings = {'initial_balance': 10000.0, 'risk_percent': 3.0, 'leverage': 10}
+
         try:
             signal_mode = SignalMode.ENHANCED if config.signal_mode == "enhanced" else SignalMode.SIMPLE
 
             engine = BacktestEngine(
-                initial_balance=10000.0,
-                risk_percent=3.0,
+                initial_balance=trading_settings['initial_balance'],
+                risk_percent=trading_settings['risk_percent'],
                 commission_percent=0.06,
                 signal_mode=signal_mode,
                 tp_method=TakeProfitMethod.OSCILLATOR,
