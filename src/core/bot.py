@@ -9,7 +9,7 @@ from core.state import TradingState, BotState, AssetState
 from config import Config, ExchangeName
 from indicators import HeikinAshi, WaveTrend, MoneyFlow
 from indicators.heikin_ashi import convert_to_heikin_ashi
-from exchanges.base import BaseExchange, Candle
+from exchanges.base import BaseExchange, Candle, Position, OrderStatus
 from exchanges.hyperliquid import HyperliquidExchange
 from exchanges.bitunix import BitunixExchange
 from strategy.signals import SignalDetector, Signal
@@ -404,8 +404,10 @@ class VMCBot:
         """
         Monitor active trades for exit conditions.
 
-        Checks if SL/TP orders were filled on the exchange and updates
-        trade status accordingly. Also handles oscillator-based exits.
+        Checks:
+        1. SL/TP orders filled on the exchange
+        2. Manual SL/TP price enforcement (backup)
+        3. Oscillator exit signals (opposite WaveTrend signal)
         """
         if not self.trade_manager or not self.trade_manager.active_trades:
             return
@@ -415,13 +417,13 @@ class VMCBot:
             try:
                 symbol = trade.symbol
 
-                # Check if SL order was filled
+                # Check if SL order was filled (order not in openOrders = filled)
                 if trade.sl_order_id:
                     try:
                         sl_order = await self.exchange.get_order(trade.sl_order_id, symbol)
-                        if sl_order and sl_order.get('status') == 'filled':
+                        if sl_order and sl_order.status == OrderStatus.FILLED:
                             logger.info(f"SL hit for trade {trade.trade_id} on {symbol}")
-                            exit_price = sl_order.get('avgPrice', trade.stop_loss)
+                            exit_price = sl_order.avg_fill_price or trade.stop_loss
                             await self._close_trade(trade, exit_price, "SL_HIT")
                             continue
                     except Exception as e:
@@ -431,46 +433,127 @@ class VMCBot:
                 if trade.tp_order_id:
                     try:
                         tp_order = await self.exchange.get_order(trade.tp_order_id, symbol)
-                        if tp_order and tp_order.get('status') == 'filled':
+                        if tp_order and tp_order.status == OrderStatus.FILLED:
                             logger.info(f"TP hit for trade {trade.trade_id} on {symbol}")
-                            exit_price = tp_order.get('avgPrice', trade.take_profit)
+                            exit_price = tp_order.avg_fill_price or trade.take_profit
                             await self._close_trade(trade, exit_price, "TP_HIT")
                             continue
                     except Exception as e:
                         logger.debug(f"Error checking TP order: {e}")
 
-                # Check current price for manual SL/TP enforcement
-                # (backup in case exchange orders didn't trigger)
+                # Get current price for SL/TP and oscillator checks
+                current_price = None
                 try:
-                    current_price = await self.exchange.get_ticker(symbol)
-                    if current_price:
-                        mid_price = current_price.get('mid', 0)
-                        if mid_price > 0:
-                            # Check SL - use is_long property
-                            if trade.is_long and mid_price <= trade.stop_loss:
-                                logger.warning(f"Manual SL trigger for {trade.trade_id} at {mid_price}")
-                                await self._close_trade(trade, mid_price, "SL_HIT_MANUAL")
-                                continue
-                            elif not trade.is_long and mid_price >= trade.stop_loss:
-                                logger.warning(f"Manual SL trigger for {trade.trade_id} at {mid_price}")
-                                await self._close_trade(trade, mid_price, "SL_HIT_MANUAL")
-                                continue
-
-                            # Check TP
-                            if trade.take_profit:
-                                if trade.is_long and mid_price >= trade.take_profit:
-                                    logger.warning(f"Manual TP trigger for {trade.trade_id} at {mid_price}")
-                                    await self._close_trade(trade, mid_price, "TP_HIT_MANUAL")
-                                    continue
-                                elif not trade.is_long and mid_price <= trade.take_profit:
-                                    logger.warning(f"Manual TP trigger for {trade.trade_id} at {mid_price}")
-                                    await self._close_trade(trade, mid_price, "TP_HIT_MANUAL")
-                                    continue
+                    ticker = await self.exchange.get_ticker(symbol)
+                    if ticker:
+                        current_price = ticker.get('mid', 0) or ticker.get('last', 0)
                 except Exception as e:
-                    logger.debug(f"Error checking current price for {symbol}: {e}")
+                    logger.debug(f"Error getting ticker for {symbol}: {e}")
+
+                if current_price and current_price > 0:
+                    # Check SL - manual enforcement
+                    if trade.is_long and current_price <= trade.stop_loss:
+                        logger.warning(f"Manual SL trigger for {trade.trade_id} at {current_price}")
+                        await self._close_trade(trade, current_price, "SL_HIT_MANUAL")
+                        continue
+                    elif not trade.is_long and current_price >= trade.stop_loss:
+                        logger.warning(f"Manual SL trigger for {trade.trade_id} at {current_price}")
+                        await self._close_trade(trade, current_price, "SL_HIT_MANUAL")
+                        continue
+
+                    # Check TP - manual enforcement
+                    if trade.take_profit:
+                        if trade.is_long and current_price >= trade.take_profit:
+                            logger.warning(f"Manual TP trigger for {trade.trade_id} at {current_price}")
+                            await self._close_trade(trade, current_price, "TP_HIT_MANUAL")
+                            continue
+                        elif not trade.is_long and current_price <= trade.take_profit:
+                            logger.warning(f"Manual TP trigger for {trade.trade_id} at {current_price}")
+                            await self._close_trade(trade, current_price, "TP_HIT_MANUAL")
+                            continue
+
+                # Check for oscillator exit signal (opposite WaveTrend signal)
+                # This is the PRIMARY exit method for "full_signal" mode
+                if await self._check_oscillator_exit(trade, current_price):
+                    continue
 
             except Exception as e:
                 logger.error(f"Error monitoring trade {trade.trade_id}: {e}")
+
+    async def _check_oscillator_exit(self, trade: Trade, current_price: Optional[float]) -> bool:
+        """
+        Check if there's an opposite WaveTrend signal to exit the trade.
+
+        For "full_signal" exit mode:
+        - LONG positions exit on SHORT signal
+        - SHORT positions exit on LONG signal
+
+        Args:
+            trade: Active trade to check
+            current_price: Current price (for exit price if signal detected)
+
+        Returns:
+            True if trade was closed due to oscillator signal
+        """
+        try:
+            # Extract asset from symbol (e.g., "BTC" from "BTC-USD-PERP")
+            asset = trade.metadata.get('symbol', trade.symbol.split('-')[0].upper())
+
+            # Get the strategy's timeframe from trade metadata
+            timeframe = trade.metadata.get('timeframe', self.config.trading.timeframe)
+
+            # Fetch candles for this asset
+            candles = await self.exchange.get_candles(
+                symbol=trade.symbol,
+                timeframe=timeframe,
+                limit=100
+            )
+
+            if len(candles) < 50:
+                return False
+
+            # Convert to DataFrame and Heikin Ashi
+            df = self._candles_to_dataframe(candles)
+            ha_df = convert_to_heikin_ashi(df)
+
+            # Calculate WaveTrend
+            wt_result = self.wavetrend.calculate(ha_df)
+
+            # Get current and previous WaveTrend values
+            wt1_current = float(wt_result.wt1.iloc[-1])
+            wt2_current = float(wt_result.wt2.iloc[-1])
+            wt1_prev = float(wt_result.wt1.iloc[-2])
+            wt2_prev = float(wt_result.wt2.iloc[-2])
+
+            # Check for opposite signal
+            exit_price = current_price or float(df['close'].iloc[-1])
+
+            if trade.is_long:
+                # LONG exit: WT1 crosses below WT2 (bearish cross)
+                crossed_down = wt1_prev >= wt2_prev and wt1_current < wt2_current
+                if crossed_down:
+                    logger.info(
+                        f"Oscillator EXIT signal for LONG {trade.trade_id}: "
+                        f"WT1 crossed below WT2 ({wt1_current:.1f} < {wt2_current:.1f})"
+                    )
+                    await self._close_trade(trade, exit_price, "OSCILLATOR_EXIT")
+                    return True
+            else:
+                # SHORT exit: WT1 crosses above WT2 (bullish cross)
+                crossed_up = wt1_prev <= wt2_prev and wt1_current > wt2_current
+                if crossed_up:
+                    logger.info(
+                        f"Oscillator EXIT signal for SHORT {trade.trade_id}: "
+                        f"WT1 crossed above WT2 ({wt1_current:.1f} > {wt2_current:.1f})"
+                    )
+                    await self._close_trade(trade, exit_price, "OSCILLATOR_EXIT")
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking oscillator exit for {trade.trade_id}: {e}")
+            return False
 
     async def _close_trade(self, trade: Trade, exit_price: float, reason: str) -> None:
         """
@@ -499,7 +582,7 @@ class VMCBot:
 
             # Close position on exchange if still open
             position = await self.exchange.get_position(trade.symbol)
-            if position and abs(position.get('size', 0)) > 0:
+            if position and abs(position.size) > 0:
                 await self.exchange.close_position(trade.symbol)
 
             # Calculate PnL
@@ -630,11 +713,10 @@ class VMCBot:
             exchange_positions = await self.exchange.get_positions()
 
             # Build lookup of exchange positions by symbol
-            exchange_pos_by_symbol: Dict[str, Any] = {}
+            exchange_pos_by_symbol: Dict[str, Position] = {}
             for pos in exchange_positions:
-                if pos and abs(pos.get('size', 0)) > 0:
-                    symbol = pos.get('symbol', '')
-                    exchange_pos_by_symbol[symbol] = pos
+                if pos and abs(pos.size) > 0:
+                    exchange_pos_by_symbol[pos.symbol] = pos
 
             # Check for stale trades (trade exists but no position on exchange)
             # active_trades is Dict[str, Trade]
@@ -660,21 +742,21 @@ class VMCBot:
             tracked_symbols = {t.symbol for t in self.trade_manager._active_trades.values()}
             for symbol, pos in exchange_pos_by_symbol.items():
                 if symbol not in tracked_symbols:
-                    logger.warning(f"Orphaned position found: {symbol} size={pos.get('size')}")
+                    logger.warning(f"Orphaned position found: {symbol} size={pos.size}")
 
                     # Create recovery trade to track this position
-                    is_long = pos.get('size', 0) > 0
+                    is_long = pos.size > 0
                     recovery_trade = Trade(
                         trade_id=f"recovery_{symbol}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
                         symbol=symbol,
                         signal_type=SignalType.LONG if is_long else SignalType.SHORT,
-                        entry_price=pos.get('entryPx', pos.get('avgPrice', 0)),
-                        size=abs(pos.get('size', 0)),
+                        entry_price=pos.entry_price,
+                        size=abs(pos.size),
                         stop_loss=0,  # Unknown - will need manual management
                         take_profit=0,  # Unknown
                         status=TradeStatus.OPEN,
                         opened_at=datetime.utcnow(),
-                        metadata={'recovered': True, 'original_position': pos}
+                        metadata={'recovered': True, 'original_position': pos.to_dict()}
                     )
 
                     self.trade_manager._active_trades[recovery_trade.trade_id] = recovery_trade

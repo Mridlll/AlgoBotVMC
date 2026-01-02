@@ -249,7 +249,8 @@ class V6SignalProcessor:
                 real_vwap=real_vwap,
             )
             if not vwap_confirmed:
-                logger.debug(f"{strat_name}: Signal {signal_type} rejected by VWAP (price={current_price:.2f}, vwap={real_vwap:.2f if real_vwap else 'N/A'})")
+                vwap_str = f"{real_vwap:.2f}" if real_vwap else "N/A"
+                logger.debug(f"{strat_name}: Signal {signal_type} rejected by VWAP (price={current_price:.2f}, vwap={vwap_str})")
                 return None
 
         # Avoid duplicate signals on same bar

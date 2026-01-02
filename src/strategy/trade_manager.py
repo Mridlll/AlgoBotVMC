@@ -251,7 +251,7 @@ class TradeManager:
                 risk_reward=risk_reward
             )
 
-            # Create trade object
+            # Create trade object with metadata including timeframe for exit signal checking
             trade = Trade(
                 trade_id=self._generate_trade_id(),
                 symbol=symbol,
@@ -265,12 +265,17 @@ class TradeManager:
                     "risk_params": {
                         "risk_amount": risk_params.risk_amount,
                         "risk_reward": risk_params.risk_reward
-                    }
+                    },
+                    # Copy key signal metadata to top level for easy access
+                    "symbol": signal.metadata.get('symbol', symbol),
+                    "timeframe": signal.metadata.get('timeframe', '5m'),
+                    "strategy": signal.metadata.get('strategy', ''),
                 }
             )
 
             # Place entry order
             order_side = OrderSide.BUY if is_long else OrderSide.SELL
+            logger.info(f"Placing entry order: {symbol} {order_side.value} size={risk_params.position_size:.6f} SL={risk_params.stop_loss:.2f} TP={risk_params.take_profit:.2f}")
 
             entry_order = await self.exchange.place_order(
                 symbol=symbol,

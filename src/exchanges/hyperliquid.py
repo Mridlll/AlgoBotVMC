@@ -269,7 +269,7 @@ class HyperliquidExchange(BaseExchange):
 
             return AccountBalance(
                 total_balance=float(margin_summary.get('accountValue', 0)),
-                available_balance=float(margin_summary.get('totalMarginUsed', 0)),
+                available_balance=float(user_state.get('withdrawable', 0)),  # Fixed: use withdrawable, not marginUsed
                 used_margin=float(margin_summary.get('totalMarginUsed', 0)),
                 unrealized_pnl=float(margin_summary.get('totalUnrealizedPnl', 0)),
                 currency="USD"
@@ -362,8 +362,16 @@ class HyperliquidExchange(BaseExchange):
             # Round price to avoid tick size errors (5 significant figures)
             price = self._round_price(price)
 
-            # Round size to 5 decimal places (standard for most assets)
-            size = self._round_size(size)
+            # Get correct size decimals for this asset and round accordingly
+            sz_decimals = await self._get_sz_decimals(symbol)
+            size = self._round_size(size, sz_decimals)
+            logger.info(f"Order size rounded to {sz_decimals} decimals: {size}")
+
+            # Check minimum notional value ($10 on Hyperliquid)
+            notional = size * price
+            MIN_NOTIONAL = 11.0  # $11 minimum to be safe
+            if notional < MIN_NOTIONAL:
+                raise ValueError(f"Order notional ${notional:.2f} below minimum ${MIN_NOTIONAL}. Size: {size}, Price: {price}")
 
             # Build order type for Hyperliquid SDK
             # Market orders use IOC (Immediate or Cancel), limit orders use GTC (Good Till Cancel)
@@ -374,6 +382,7 @@ class HyperliquidExchange(BaseExchange):
 
             # Place the order using positional arguments
             # Signature: order(name, is_buy, sz, limit_px, order_type, reduce_only, cloid, builder)
+            logger.info(f"Placing order: {symbol} {'BUY' if is_buy else 'SELL'} size={size} price={price} notional=${size*price:.2f}")
             result = self._exchange.order(
                 symbol,          # name: str
                 is_buy,          # is_buy: bool
@@ -396,6 +405,11 @@ class HyperliquidExchange(BaseExchange):
                     order_id = str(order_result['resting'].get('oid', ''))
                 elif 'filled' in order_result:
                     order_id = str(order_result['filled'].get('oid', ''))
+
+                # If no order ID, something went wrong
+                if not order_id:
+                    logger.warning(f"Order response missing order ID: {order_result}")
+                    raise Exception(f"Order accepted but no order ID returned: {order_result}")
 
                 # Determine fill status
                 is_filled = 'filled' in order_result
@@ -640,3 +654,26 @@ class HyperliquidExchange(BaseExchange):
         """Round size to the asset's decimal precision."""
         factor = 10 ** sz_decimals
         return round(size * factor) / factor
+
+    async def _get_sz_decimals(self, symbol: str) -> int:
+        """Get the size decimal precision for an asset.
+
+        Different assets have different precision requirements:
+        - BTC: 5 decimals (0.00001)
+        - ETH: 4 decimals (0.0001)
+        - SOL: 2 decimals (0.01)
+        """
+        if not self._info:
+            return 5  # Default fallback
+
+        try:
+            meta = self._info.meta()
+            for asset_info in meta.get('universe', []):
+                if asset_info.get('name') == symbol:
+                    sz_decimals = asset_info.get('szDecimals', 5)
+                    logger.debug(f"{symbol} szDecimals: {sz_decimals}")
+                    return sz_decimals
+            return 5  # Default if not found
+        except Exception as e:
+            logger.warning(f"Failed to get szDecimals for {symbol}: {e}")
+            return 5
