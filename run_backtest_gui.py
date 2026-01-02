@@ -11,6 +11,7 @@ Usage:
 
 import sys
 import asyncio
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from pathlib import Path
@@ -18,9 +19,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import threading
 
+# Get script directory and change to it
+SCRIPT_DIR = Path(__file__).parent.resolve()
+os.chdir(SCRIPT_DIR)
+
 # Add paths for imports
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(SCRIPT_DIR / "src"))
 
 import pandas as pd
 
