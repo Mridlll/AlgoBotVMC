@@ -38,7 +38,7 @@ logger = get_logger("backtest")
 # Constants
 INITIAL_BALANCE = 10000.0
 RISK_PERCENT = 3.0
-COMMISSION = 0.0006  # 0.06%
+COMMISSION = 0.06  # 0.06% (engine divides by 100)
 
 
 @dataclass
@@ -137,11 +137,12 @@ def run_strategy_backtest(
     engine = BacktestEngine(
         initial_balance=INITIAL_BALANCE,
         risk_percent=RISK_PERCENT,
-        commission=COMMISSION,
+        commission_percent=COMMISSION,
         signal_mode=signal_mode,
         tp_method=TakeProfitMethod.OSCILLATOR,  # V6 uses oscillator exit
         oscillator_mode=OscillatorExitMode.FULL_SIGNAL,
-        anchor_level=strategy_config.anchor_level,
+        simple_overbought=strategy_config.anchor_level,
+        simple_oversold=-strategy_config.anchor_level,
         direction_filter=strategy_config.direction_filter
     )
 
