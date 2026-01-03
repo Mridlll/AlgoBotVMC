@@ -227,7 +227,7 @@ class TradeManager:
         # Check existing exchange positions
         try:
             position = await self.exchange.get_position(symbol)
-            if position and position.size > 0:
+            if position and abs(position.size) > 0:
                 logger.warning(f"Existing position found for {symbol}")
                 return False
         except Exception as e:
@@ -563,10 +563,6 @@ class TradeManager:
 
         return None
 
-    @property
-    def active_trades(self) -> Dict[str, Trade]:
-        """Get all active trades."""
-        return self._active_trades.copy()
 
     @property
     def trade_history(self) -> List[Trade]:
