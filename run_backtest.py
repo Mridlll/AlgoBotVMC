@@ -355,6 +355,13 @@ Examples:
     print("\n" + "=" * 70)
     print("VMC Trading Bot V6 - Backtest")
     print("=" * 70)
+    print("")
+    print("BACKTEST LIMITATIONS:")
+    print("  - Leverage: Display only (position sizing capped at 3x)")
+    print("  - Max Positions: Not enforced (1 position at a time)")
+    print("  - Liquidation: Not simulated")
+    print("  - Risk %: Works correctly for position sizing")
+    print("")
 
     # Load config
     config_path = Path(args.config)

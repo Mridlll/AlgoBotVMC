@@ -109,6 +109,29 @@ strategies:
 
 ---
 
+## Known Limitations
+
+This backtest engine was built for realistic parameter ranges (1-3x leverage). Some features are intentionally simplified:
+
+| Parameter | Backtest Behavior | Live Bot Behavior |
+|-----------|-------------------|-------------------|
+| **Leverage** | Display only - position sizing capped at 3x | Fully applied |
+| **Max Positions** | 1 position at a time by design | Enforces config limit |
+| **Liquidation** | Not simulated - losses only at SL/TP | Exchange handles |
+| **Risk %** | Works correctly | Works correctly |
+
+**Why no liquidation simulation?**
+- The 15 optimized strategies use 1-3x leverage where liquidation is extremely rare
+- Extreme parameters (100x, 100% risk) were never the design target
+- Adding full margin simulation would require significant rework
+
+**What this means:**
+- The backtest is accurate for the intended 1-10x leverage range
+- Don't test with extreme parameters expecting realistic liquidation
+- Risk % is the primary sizing control and works correctly
+
+---
+
 ## Files Reference
 
 ```

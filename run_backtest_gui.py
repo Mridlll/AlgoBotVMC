@@ -273,6 +273,13 @@ class BacktestGUI:
         self.root.after(0, lambda: self.log("=" * 60))
         self.root.after(0, lambda: self.log("VMC Trading Bot V6 - Backtest"))
         self.root.after(0, lambda: self.log("=" * 60))
+        self.root.after(0, lambda: self.log(""))
+        self.root.after(0, lambda: self.log("BACKTEST LIMITATIONS:"))
+        self.root.after(0, lambda: self.log("  - Leverage: Display only (position sizing capped at 3x)"))
+        self.root.after(0, lambda: self.log("  - Max Positions: Not enforced (1 position at a time)"))
+        self.root.after(0, lambda: self.log("  - Liquidation: Not simulated"))
+        self.root.after(0, lambda: self.log("  - Risk %: Works correctly for position sizing"))
+        self.root.after(0, lambda: self.log(""))
 
         # Parse settings
         days = int(self.days.get())
