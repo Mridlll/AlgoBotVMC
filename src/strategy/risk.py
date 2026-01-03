@@ -193,14 +193,14 @@ class RiskManager:
             swing_low = df['low'].iloc[-lookback:].min()
             # Handle NaN - fall back to fixed percent if data is bad
             if np.isnan(swing_low):
-                return entry_price * (1 - self.fixed_stop_percent)
+                return entry_price * (1 - self.fixed_sl_percent / 100)
             sl = swing_low * (1 - buffer)
         else:
             # Stop above recent swing high
             swing_high = df['high'].iloc[-lookback:].max()
             # Handle NaN - fall back to fixed percent if data is bad
             if np.isnan(swing_high):
-                return entry_price * (1 + self.fixed_stop_percent)
+                return entry_price * (1 + self.fixed_sl_percent / 100)
             sl = swing_high * (1 + buffer)
 
         return sl
