@@ -1,6 +1,7 @@
 """Trade execution and position management."""
 
 import asyncio
+import math
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
@@ -280,9 +281,14 @@ class TradeManager:
                 risk_reward=risk_reward
             )
 
-            # CRITICAL: Validate position size before placing order
-            if risk_params.position_size <= 0:
+            # CRITICAL: Validate position size before placing order (check for NaN too!)
+            if risk_params.position_size <= 0 or math.isnan(risk_params.position_size):
                 logger.error(f"Invalid position size for {symbol}: {risk_params.position_size}")
+                return None
+
+            # Validate SL/TP are not NaN
+            if math.isnan(risk_params.stop_loss) or math.isnan(risk_params.take_profit):
+                logger.error(f"Invalid SL/TP for {symbol}: SL={risk_params.stop_loss}, TP={risk_params.take_profit}")
                 return None
 
             # Check minimum notional value ($10 on Hyperliquid)
