@@ -154,7 +154,9 @@ class TradeManager:
         order_id: str,
         symbol: str,
         timeout_seconds: int = 30,
-        poll_interval: float = 1.0
+        poll_interval: float = 1.0,
+        expected_size: float = 0.0,
+        is_buy: bool = True
     ) -> Optional[Order]:
         """
         Wait for an order to be filled.
@@ -164,17 +166,58 @@ class TradeManager:
             symbol: Trading symbol
             timeout_seconds: Maximum time to wait for fill
             poll_interval: Time between status checks
+            expected_size: Expected position size change (for fallback detection)
+            is_buy: True if buy order, False if sell
 
         Returns:
             Filled Order object, or None if timeout
         """
         max_attempts = int(timeout_seconds / poll_interval)
 
+        # Get initial position for fallback detection
+        initial_position = await self.exchange.get_position(symbol)
+        initial_size = initial_position.size if initial_position else 0.0
+        logger.debug(f"Initial position for {symbol}: {initial_size}")
+
         for attempt in range(max_attempts):
             try:
                 order = await self.exchange.get_order(order_id, symbol)
 
                 if order is None:
+                    # Order not in openOrders - may have filled instantly
+                    # Use position-based fallback detection
+                    if expected_size > 0:
+                        current_position = await self.exchange.get_position(symbol)
+                        current_size = current_position.size if current_position else 0.0
+
+                        # Calculate expected size change
+                        if is_buy:
+                            expected_new_size = initial_size + expected_size
+                        else:
+                            expected_new_size = initial_size - expected_size
+
+                        # Check if position changed by expected amount (5% tolerance)
+                        size_diff = abs(abs(current_size) - abs(expected_new_size))
+                        if size_diff <= expected_size * 0.05 or abs(current_size - initial_size) >= expected_size * 0.95:
+                            # Position changed as expected - order filled
+                            current_price = await self.exchange.get_ticker(symbol)
+                            fill_price = current_price.last_price if current_price else 0.0
+
+                            logger.info(f"Order {order_id} detected as filled via position change: {initial_size} -> {current_size}")
+
+                            # Return synthetic filled order
+                            return Order(
+                                order_id=order_id,
+                                symbol=symbol,
+                                side=OrderSide.BUY if is_buy else OrderSide.SELL,
+                                order_type=OrderType.MARKET,
+                                size=expected_size,
+                                price=fill_price,
+                                status=OrderStatus.FILLED,
+                                filled_size=expected_size,
+                                avg_fill_price=fill_price
+                            )
+
                     logger.warning(f"Order {order_id} not found on attempt {attempt + 1}")
                     await asyncio.sleep(poll_interval)
                     continue
@@ -340,7 +383,9 @@ class TradeManager:
                 order_id=entry_order.order_id,
                 symbol=symbol,
                 timeout_seconds=30,
-                poll_interval=1.0
+                poll_interval=1.0,
+                expected_size=risk_params.position_size,
+                is_buy=is_long
             )
 
             if filled_order is None:
