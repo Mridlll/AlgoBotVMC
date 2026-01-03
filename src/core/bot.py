@@ -169,7 +169,8 @@ class VMCBot:
                 tp_method=TakeProfitMethod(self.config.take_profit.method.value),
                 sl_method=StopLossMethod(self.config.stop_loss.method.value),
                 max_positions=self.config.trading.max_positions,
-                max_positions_per_asset=self.config.trading.max_positions_per_asset
+                max_positions_per_asset=self.config.trading.max_positions_per_asset,
+                max_portfolio_heat_percent=self.config.trading.max_portfolio_heat_percent
             )
 
             # Initialize trade persistence

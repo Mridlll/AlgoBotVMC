@@ -414,6 +414,10 @@ class TradingConfig(BaseModel):
     max_positions: int = Field(default=2, ge=1, le=20)
     max_positions_per_asset: int = Field(default=1, ge=1, le=5)
     leverage: float = Field(default=1.0, ge=1, le=100)
+    max_portfolio_heat_percent: float = Field(
+        default=12.0, ge=1.0, le=100.0,
+        description="Maximum total risk across all open positions (% of account)"
+    )
 
     @field_validator("timeframe")
     @classmethod

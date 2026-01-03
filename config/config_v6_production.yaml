@@ -51,6 +51,7 @@ trading:
   max_positions: 9               # 3 per asset x 3 assets
   max_positions_per_asset: 3     # Up to 3 concurrent positions per asset
   leverage: 3.0                  # 3x leverage
+  max_portfolio_heat_percent: 12.0  # Max 12% total risk across all positions
 
   # Check interval (use smallest strategy timeframe)
   timeframe: "5m"                # Check every 5 minutes

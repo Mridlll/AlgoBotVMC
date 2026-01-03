@@ -3,7 +3,7 @@
 import asyncio
 import math
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -96,7 +96,8 @@ class TradeManager:
         tp_method: TakeProfitMethod = TakeProfitMethod.FIXED_RR,
         sl_method: StopLossMethod = StopLossMethod.SWING,
         max_positions: int = 2,
-        max_positions_per_asset: int = 1
+        max_positions_per_asset: int = 1,
+        max_portfolio_heat_percent: float = 12.0
     ):
         """
         Initialize trade manager.
@@ -108,6 +109,7 @@ class TradeManager:
             sl_method: Stop loss method
             max_positions: Maximum total positions
             max_positions_per_asset: Maximum positions per asset
+            max_portfolio_heat_percent: Maximum total risk across all positions (% of account)
         """
         self.exchange = exchange
         self.risk_manager = risk_manager
@@ -115,6 +117,7 @@ class TradeManager:
         self.sl_method = sl_method
         self.max_positions = max_positions
         self.max_positions_per_asset = max_positions_per_asset
+        self.max_portfolio_heat_percent = max_portfolio_heat_percent
 
         self._active_trades: Dict[str, Trade] = {}
         self._trade_history: List[Trade] = []
@@ -143,6 +146,45 @@ class TradeManager:
         """Thread-safe get trade."""
         async with self._trades_lock:
             return self._active_trades.get(trade_id)
+
+    def calculate_trade_heat(self, trade: 'Trade') -> float:
+        """
+        Calculate the risk (heat) of a single trade in USD.
+
+        Heat = potential loss if stop loss is hit.
+        """
+        if trade.is_long:
+            risk_per_unit = trade.entry_price - trade.stop_loss
+        else:
+            risk_per_unit = trade.stop_loss - trade.entry_price
+
+        return abs(risk_per_unit * trade.size)
+
+    def get_current_heat(self, account_balance: float) -> Tuple[float, float]:
+        """
+        Calculate current portfolio heat.
+
+        Returns:
+            Tuple of (heat_usd, heat_percent)
+        """
+        total_heat_usd = 0.0
+        for trade in self._active_trades.values():
+            total_heat_usd += self.calculate_trade_heat(trade)
+
+        heat_percent = (total_heat_usd / account_balance * 100) if account_balance > 0 else 0.0
+        return total_heat_usd, heat_percent
+
+    def get_available_heat(self, account_balance: float) -> Tuple[float, float]:
+        """
+        Calculate available heat budget.
+
+        Returns:
+            Tuple of (available_heat_usd, available_heat_percent)
+        """
+        _, current_heat_percent = self.get_current_heat(account_balance)
+        available_percent = max(0, self.max_portfolio_heat_percent - current_heat_percent)
+        available_usd = account_balance * (available_percent / 100)
+        return available_usd, available_percent
 
     def _generate_trade_id(self) -> str:
         """Generate unique trade ID."""
@@ -246,37 +288,50 @@ class TradeManager:
         logger.warning(f"Order {order_id} did not fill within {timeout_seconds}s")
         return None
 
-    async def can_open_trade(self, symbol: str) -> bool:
+    async def can_open_trade(self, symbol: str, account_balance: Optional[float] = None) -> Tuple[bool, float]:
         """
-        Check if we can open a new trade.
+        Check if we can open a new trade and return available heat.
 
         Args:
             symbol: Trading symbol
+            account_balance: Account balance for heat calculation (optional)
 
         Returns:
-            True if we can open a trade
+            Tuple of (can_trade: bool, available_heat_percent: float)
         """
         # Check total positions
         if len(self._active_trades) >= self.max_positions:
             logger.warning(f"Max positions ({self.max_positions}) reached")
-            return False
+            return False, 0.0
 
         # Check positions per asset
         asset_trades = [t for t in self._active_trades.values() if t.symbol == symbol]
         if len(asset_trades) >= self.max_positions_per_asset:
             logger.warning(f"Max positions per asset ({self.max_positions_per_asset}) reached for {symbol}")
-            return False
+            return False, 0.0
 
         # Check existing exchange positions
         try:
             position = await self.exchange.get_position(symbol)
             if position and abs(position.size) > 0:
                 logger.warning(f"Existing position found for {symbol}")
-                return False
+                return False, 0.0
         except Exception as e:
             logger.warning(f"Failed to check existing position: {e}")
 
-        return True
+        # Check portfolio heat
+        if account_balance and account_balance > 0:
+            _, current_heat = self.get_current_heat(account_balance)
+            available_heat = self.max_portfolio_heat_percent - current_heat
+
+            if available_heat <= 0:
+                logger.warning(f"Portfolio heat limit reached: {current_heat:.1f}% >= {self.max_portfolio_heat_percent}%")
+                return False, 0.0
+
+            logger.debug(f"Portfolio heat: {current_heat:.1f}%, available: {available_heat:.1f}%")
+            return True, available_heat
+
+        return True, self.max_portfolio_heat_percent
 
     async def execute_signal(
         self,
@@ -299,12 +354,8 @@ class TradeManager:
         """
         symbol = signal.metadata.get('symbol', 'BTC')
 
-        # Check if we can open
-        if not await self.can_open_trade(symbol):
-            return None
-
         try:
-            # Get account balance
+            # Get account balance FIRST (needed for heat check)
             balance = await self.exchange.get_balance()
 
             # CRITICAL: Validate balance before proceeding
@@ -312,7 +363,19 @@ class TradeManager:
                 logger.error(f"Invalid balance for {symbol}: {balance}")
                 return None
 
-            # Calculate risk parameters
+            # Check if we can open (includes heat check)
+            can_trade, available_heat = await self.can_open_trade(symbol, balance.available_balance)
+            if not can_trade:
+                return None
+
+            # Cap risk_percent based on available heat budget
+            requested_risk = risk_percent or self.risk_manager.default_risk_percent
+            effective_risk = min(requested_risk, available_heat)
+
+            if effective_risk < requested_risk:
+                logger.info(f"Risk capped by heat budget: {requested_risk}% -> {effective_risk:.1f}% (available heat: {available_heat:.1f}%)")
+
+            # Calculate risk parameters with heat-capped risk
             is_long = signal.signal_type == SignalType.LONG
             risk_params = self.risk_manager.calculate_full_risk_params(
                 account_balance=balance.available_balance,
@@ -320,7 +383,7 @@ class TradeManager:
                 is_long=is_long,
                 df=df,
                 sl_method=self.sl_method,
-                risk_percent=risk_percent,
+                risk_percent=effective_risk,
                 risk_reward=risk_reward
             )
 
