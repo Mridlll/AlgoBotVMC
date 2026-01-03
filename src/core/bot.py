@@ -891,7 +891,7 @@ class VMCBot:
             logger.info(
                 f"Signal detected: {signal.signal_type.value} {asset} @ {signal.entry_price}"
             )
-            await self._notify("signal_detected", signal.to_dict())
+            await self._notify("signal_detected", {"symbol": asset, **signal.to_dict()})
 
         return signal
 
@@ -959,7 +959,7 @@ class VMCBot:
             best.signal.metadata['symbol'] = asset
             self.state.record_signal(best.signal)
             await self._notify("signal_detected", {
-                **best.signal.to_dict(),
+                'symbol': asset, **best.signal.to_dict(),
                 'v6_strategy': best.strategy_name,
                 'v6_timeframe': best.timeframe,
                 'vwap_confirmed': best.vwap_confirmed,
@@ -1036,7 +1036,7 @@ class VMCBot:
                 f"conf={mtf_signal.overall_confidence:.2f}]"
             )
             await self._notify("signal_detected", {
-                **signal.to_dict(),
+                "symbol": asset, **signal.to_dict(),
                 "mtf_aligned": mtf_signal.is_aligned,
                 "bias_direction": mtf_signal.bias_result.direction.value,
                 "alignment_percent": mtf_signal.alignment_percent,
