@@ -20,8 +20,9 @@ import sys
 import os
 import time
 import json
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
 
@@ -58,13 +59,107 @@ class RunnerState:
     @classmethod
     def new(cls) -> 'RunnerState':
         return cls(
-            started_at=datetime.utcnow().isoformat(),
+            started_at=datetime.now(timezone.utc).isoformat(),
             restart_count=0,
             last_crash_at=None,
             last_crash_reason=None,
             total_uptime_seconds=0,
             successful_restarts=0
         )
+
+
+class Watchdog:
+    """
+    Watchdog to detect stuck/frozen bot and trigger restart.
+
+    Monitors the heartbeat file and triggers callback if stale.
+    """
+
+    HEARTBEAT_FILE = Path("data/heartbeat.txt")
+
+    def __init__(
+        self,
+        stale_threshold_seconds: int = 900,  # 15 minutes
+        check_interval_seconds: int = 60,     # Check every minute
+        startup_grace_seconds: int = 120,     # 2 minute grace period on startup
+        on_stale_callback=None
+    ):
+        self.stale_threshold = stale_threshold_seconds
+        self.check_interval = check_interval_seconds
+        self.startup_grace = startup_grace_seconds
+        self.on_stale_callback = on_stale_callback
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._start_time: Optional[float] = None
+
+    def start(self):
+        """Start the watchdog monitor thread."""
+        self._running = True
+        self._start_time = time.time()
+        # Clear stale heartbeat file on startup
+        if self.HEARTBEAT_FILE.exists():
+            self.HEARTBEAT_FILE.unlink()
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._thread.start()
+        logger.info(f"Watchdog started (stale threshold: {self.stale_threshold}s, grace: {self.startup_grace}s)")
+
+    def stop(self):
+        """Stop the watchdog."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5)
+        logger.info("Watchdog stopped")
+
+    def _monitor_loop(self):
+        """Monitor loop running in background thread."""
+        while self._running:
+            try:
+                if self._is_heartbeat_stale():
+                    logger.warning("WATCHDOG: Heartbeat is stale - bot appears frozen!")
+                    if self.on_stale_callback:
+                        self.on_stale_callback()
+            except Exception as e:
+                logger.error(f"Watchdog error: {e}")
+
+            time.sleep(self.check_interval)
+
+    def _is_heartbeat_stale(self) -> bool:
+        """Check if heartbeat file is stale."""
+        # Check grace period - don't trigger during startup
+        if self._start_time and (time.time() - self._start_time) < self.startup_grace:
+            return False
+
+        if not self.HEARTBEAT_FILE.exists():
+            # No heartbeat file yet - bot might still be starting
+            return False
+
+        try:
+            content = self.HEARTBEAT_FILE.read_text()
+            lines = content.strip().split('\n')
+            if not lines:
+                return True
+
+            # Parse timestamp from first line
+            timestamp_str = lines[0]
+            heartbeat_time = datetime.fromisoformat(timestamp_str)
+
+            # Compare with current time
+            now = datetime.now(timezone.utc)
+            # Handle naive datetime from heartbeat
+            if heartbeat_time.tzinfo is None:
+                heartbeat_time = heartbeat_time.replace(tzinfo=timezone.utc)
+
+            age_seconds = (now - heartbeat_time).total_seconds()
+
+            if age_seconds > self.stale_threshold:
+                logger.warning(f"Heartbeat age: {age_seconds:.0f}s (threshold: {self.stale_threshold}s)")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error reading heartbeat: {e}")
+            return False
 
 
 class ProductionRunner:
@@ -114,6 +209,13 @@ class ProductionRunner:
         self.is_crashed = False
         self.start_time: Optional[float] = None
 
+        # Watchdog for detecting frozen bot
+        self.watchdog = Watchdog(
+            stale_threshold_seconds=900,  # 15 minutes
+            check_interval_seconds=60,
+            on_stale_callback=self._handle_watchdog_timeout
+        )
+
         # Setup signal handlers
         self._setup_signals()
 
@@ -139,6 +241,23 @@ class ProductionRunner:
         # If bot is running, stop the event loop
         if self.bot and self.bot._running:
             self.bot._running = False
+
+    def _handle_watchdog_timeout(self):
+        """Handle watchdog timeout - bot appears frozen."""
+        logger.error("WATCHDOG TIMEOUT: Bot is frozen, forcing restart...")
+        self.state.last_crash_reason = "Watchdog timeout - bot frozen"
+        self.state.last_crash_at = datetime.now(timezone.utc).isoformat()
+        self._save_state()
+        self.is_crashed = True
+
+        # Force stop the bot
+        if self.bot and self.bot._running:
+            self.bot._running = False
+
+        # Force exit the process - will be restarted by external supervisor
+        # This is necessary because the bot might be stuck in a blocking call
+        logger.error("Forcing process exit for restart...")
+        os._exit(1)
 
     def _load_state(self) -> RunnerState:
         """Load state from file or create new."""
@@ -314,7 +433,11 @@ class ProductionRunner:
         logger.info(f"Config: {self.config_path}")
         logger.info(f"Max restarts: {self.max_restarts}")
         logger.info(f"Close positions on crash: {self.close_positions_on_crash}")
+        logger.info(f"Watchdog: enabled (15min timeout)")
         logger.info("=" * 60)
+
+        # Start watchdog
+        self.watchdog.start()
 
         while not self.shutdown_requested:
             # Check restart limit
@@ -364,6 +487,9 @@ class ProductionRunner:
                     self.state.successful_restarts += 1
                     self._save_state()
                     logger.info(f"Restarting bot (attempt {self.state.restart_count + 1})...")
+
+        # Stop watchdog
+        self.watchdog.stop()
 
         # Final state save
         self._save_state()

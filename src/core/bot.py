@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from pathlib import Path
 import pandas as pd
 
 from core.state import TradingState, BotState, AssetState
@@ -86,6 +87,10 @@ class VMCBot:
         # Running flag
         self._running = False
 
+        # Heartbeat file for watchdog
+        self._heartbeat_file = Path("data/heartbeat.txt")
+        self._last_heartbeat = datetime.utcnow()
+
     def set_notification_callback(self, callback) -> None:
         """Set callback for notifications."""
         self._notification_callback = callback
@@ -97,6 +102,20 @@ class VMCBot:
                 await self._notification_callback(event_type, data)
             except Exception as e:
                 logger.warning(f"Notification failed: {e}")
+
+    def _update_heartbeat(self, active_trades: int = 0, signals_found: int = 0) -> None:
+        """Update heartbeat file for watchdog monitoring."""
+        try:
+            self._heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+            now = datetime.utcnow()
+            self._last_heartbeat = now
+            self._heartbeat_file.write_text(
+                f"{now.isoformat()}\n"
+                f"active_trades={active_trades}\n"
+                f"signals_found={signals_found}\n"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update heartbeat: {e}")
 
     def _create_exchange(self) -> BaseExchange:
         """Create exchange client based on config."""
@@ -396,6 +415,11 @@ class VMCBot:
 
                 for signal in signals:
                     await self._handle_signal(signal)
+
+                # Update heartbeat and log scan status
+                active_count = len(self.trade_manager._active_trades) if self.trade_manager else 0
+                self._update_heartbeat(active_trades=active_count, signals_found=len(signals))
+                logger.info(f"Scan complete: {len(signals)} signals, {active_count} active trades")
 
             except Exception as e:
                 logger.error(f"Error in trading loop: {e}")
